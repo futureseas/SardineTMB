@@ -23,6 +23,9 @@ Data/Shapefiles/gshhg-shp-2.3.7*
 # ROMS hindcast data sets (100MiB limit exceeded)
 # --------------------------------------
 Data/ROMS2/
+CDO-Ubuntu20.04/my_target_grid.txt
+CDO-Ubuntu20.04/target_10km_grid.nc
+CDO-Ubuntu20.04/target_10km_grid.txt
 
 #--------------------------------------
 # Code outputs

@@ -1,0 +1,1235 @@
+---
+title: "Length Bin exploration models"
+author: "Stephanie Hopkins"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE
+    
+---
+
+```{r setup, include=FALSE}
+
+#-----------------------------------------------------------------
+# Run first if not already installed
+#-----------------------------------------------------------------
+
+#remotes::install_github("pbs-assess/sdmTMBextra", dependencies = TRUE)
+#remotes::install_github("pbs-assess/sdmTMB", dependencies = TRUE)
+
+#-----------------------------------------------------------------
+# If sdmTMBextra fails because of INLA install, use the following:
+#-----------------------------------------------------------------
+
+#remotes::install_version("INLA", version = "25.06.13",
+#repos = c(getOption("repos"), INLA = "https://inla.r-inla-download.org/R/testing"), dep = TRUE) 
+
+#-----------------------------------------------------------------
+# Begin setup
+#-----------------------------------------------------------------
+
+rm(list=ls())
+gc()
+
+load.lib <- c("tidyverse", "data.table", "cowplot", "sf", 
+              "here", "sdmTMB", "sdmTMBextra",
+              "future.apply", # required for running sdmTMB::sdmTMB_cv
+              "groupdata2", # allows for creation of stratified folds
+              "ggforce" # enables plot_anisotropy
+              ) 
+
+install.lib <- load.lib[!load.lib %in% installed.packages()]
+
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+
+sf_use_s2(TRUE)
+
+dir <- "C:/Users/steph/Documents/Sardine_SptlOM"
+
+source(here(dir, "functions.R"))
+
+```
+
+# Load coastal shapefile and define projection
+
+```{r, ROMS.test}
+
+# Since the data falls within two UTM zones and there is not an ideal projection to use, apply a custom equal area Albers projection
+aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
+
+# High res coastal boundary from NOAA
+land.barrier <- read_sf(here(dir, "Data", "Shapefiles", "land.barrier.shp"))
+
+# Load YearSeason gaps to fill
+load(file = here(dir, "Data", "ExampleRun",
+                                    "est.missing.time2.rda"))
+
+```
+
+# Load YearSeason data (with MLD) and calculate density
+
+Note you will need to redefine the transect centres to get X and Y and that you need to adjust the data depending on whether a fixed 30m or mld is used.
+
+```{r, load.seasonal.data.mld}
+
+# Load new sdm data
+TwoSeas.dat <- fread(here(dir, "Data", 
+                           "mld.final_table_allHistoric.csv"))
+
+# Boxplot to check for "Empty" combinations and outliers
+FulldatLengthbinObs <-
+  ggplot(TwoSeas.dat %>%
+         filter(len.bin != "" & 
+                  !Year %in% c(2009:2011) &
+                  Year < 2021 & 
+                  Season == "Summer"), 
+       aes(x = as.factor(YearSeas), y = Bin_Haul_Biomass, fill = len.bin)) +
+  geom_boxplot(outlier.alpha = 0.5) +
+  scale_y_log10() + # Weights are usually log-normal
+  facet_wrap(~len.bin, scales = "free_y") +
+  labs(title = "Sardine Weight Distribution",
+       x = "Year/Season", 
+       y = "Total Weight (Log Scale)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90))
+
+FulldatLengthbinObs
+
+ggsave2(filename="FulldatLengthbinObsByYearBoxplot.jpeg",
+        plot=FulldatLengthbinObs, device="jpeg", 
+        path=here(dir, "Final.Figures",
+                  "S2.length.bin.exploration"),
+        dpi=1200, width = 29, height=21, 
+        unit="cm", limitsize = FALSE)
+
+```
+
+Note without having lengths per year the model cannot run. Trying random year effects
+also fail when using iid and no extra time argument.
+
+# Create transect data
+
+```{r, create.transect.data}
+
+survey.transects.st <- TwoSeas.dat %>%
+  select(keys, Year, len.bin, lenBin.nb, Bin_Haul_Biomass, Season, 
+         Fin_sweep.m3, latBin, YearSeas, YearSeas.nm, mean_depth,
+         start_latitude, start_longitude, stop_latitude, 
+         stop_longitude, Country, Species_weight) %>%
+  # Remove absence data
+  filter(len.bin != "")
+
+# Create a tibble
+
+# 1. Initialize an empty list (NOT a vector or table)
+results_list <- list()
+
+for(k in unique(survey.transects.st$keys)){
+  
+  # Use key-based subsetting
+  ori.dat = survey.transects.st[keys == k]
+  
+  # Create your fill data
+  fill.dat = data.table(
+    keys = rep(ori.dat$keys, 3), 
+    Year = rep(ori.dat$Year, 3),
+    len.bin = c("200+", "150to200", "less150"),
+    Bin_Haul_Biomass = 0, # data.table automatically repeats single values
+    lenBin.nb = 0, # data.table automatically repeats single values
+    Season = rep(ori.dat$Season, 3),
+    Fin_sweep.m3 = rep(ori.dat$Fin_sweep.m3, 3),
+    latBin = rep(ori.dat$latBin, 3), # Note: corrected from ori.dat$Fin_sweep.m3
+    YearSeas = rep(ori.dat$YearSeas, 3),
+    YearSeas.nm = rep(ori.dat$YearSeas.nm, 3),
+    mean_depth = rep(ori.dat$mean_depth, 3),
+    start_latitude = rep(ori.dat$start_latitude, 3),
+    start_longitude = rep(ori.dat$start_longitude, 3),
+    stop_latitude = rep(ori.dat$stop_latitude, 3), 
+    stop_longitude = rep(ori.dat$stop_longitude, 3),
+    Country = rep(ori.dat$Country, 3), 
+    Species_weight = rep(ori.dat$Species_weight, 3)
+  )
+  
+  # 2. Store the iteration result in the list
+  # We combine ori and fill for this specific key
+  results_list[[k]] <- rbind(ori.dat, fill.dat)
+}
+
+# 3. Join everything together at once
+new.dat <- rbindlist(results_list)
+  
+new.dat.sum <- new.dat %>%
+  group_by(keys, Year, Season, Fin_sweep.m3, len.bin, latBin, YearSeas, 
+           YearSeas.nm, mean_depth, start_latitude, start_longitude, 
+           stop_latitude, stop_longitude, Country, Species_weight) %>%
+  summarise(Species_weight = first(Species_weight),
+            Bin_Haul_Biomass = sum(Bin_Haul_Biomass),
+            lenBin.nb = sum(lenBin.nb),
+            .groups = "keep") %>%
+  ungroup()
+# View(new.dat.sum)  
+  
+final.dat <- new.dat.sum %>%
+  mutate(FID = keys,
+         # Set length bin as factor
+         len.bin = as.factor(len.bin)
+         )
+# View(final.dat)
+
+# Note data will be in wgs84
+survey.transects3.sf <- 
+  make_transect_sf(final.dat, crs = 4326) 
+
+survey.transects3.sf.clip <- survey.transects3.sf %>%
+  mutate(X = st_coordinates(st_centroid(.))[,1],
+         Y = st_coordinates(st_centroid(.))[,2]) %>%
+  filter(Y < 52)
+
+range(survey.transects3.sf.clip$Y)
+# [1] 31.5053  50.6905
+
+## Create X Y columns and extract polygon centers
+TwoSeas.dat4 <- survey.transects3.sf.clip %>%
+  # Project the data to Albers Conical Equal Area
+  st_transform(., crs = aea_custom) %>%
+  # Extract the centre of the transect (this is in km)
+  mutate(X = st_coordinates(st_centroid(.))[,1]/1000,
+         Y = st_coordinates(st_centroid(.))[,2]/1000) %>%
+  st_drop_geometry() 
+
+range(TwoSeas.dat4$X)
+# [1] -308.2030  668.1958
+
+range(TwoSeas.dat4$Y)
+# [1] -946.052  1206.229
+
+``` 
+
+# Split data by Season
+
+Note that there is no Canadian data for the spring.
+
+## For Season 2 define spatial boundaries
+
+```{r, sptl.boundaries2}
+
+# Filter the data frame
+Season.2.dat <- TwoSeas.dat4 %>%
+  filter(Season == "Summer" & !Year %in% c(2009:2011) &
+           # To be able to compare with ROMS
+           Year < 2021
+         ) 
+
+# Delineate spatial domain
+Season.2.dat <- 
+  Season.2.dat[Season.2.dat$X >= min(Season.2.dat$X) & 
+                 Season.2.dat$X <= max(Season.2.dat$X) & 
+                 Season.2.dat$Y >= min(Season.2.dat$Y) & 
+                 Season.2.dat$Y <= max(Season.2.dat$Y), ]
+
+# Function to test for values ending in .1
+integerFunction <- function(x) {
+  abs(x %% 1 - 0.1) < 1e-8
+}
+
+vals <- integerFunction(est.missing.time2) 
+
+# Apply the function to filter values ending in .1
+est.missing.time.S2 <- est.missing.time2[vals]
+est.missing.time.S2
+# [1] 2009.1 2010.1 2011.1 2020.1
+
+```
+
+# Group like gear configurations
+
+This is based on the literature and survey reports across the US and Canadian Survey segments. Each group used the same gear configuration and overall strategy, but may have more samples in some years than others. The general gear opening dimensions are also comparable within each group.
+
+```{r, gear.configs}
+
+Season.2.dat <- Season.2.dat %>%
+  mutate(GearConfig = case_when(
+    Country == "Canada" & Year < 2017 ~ "CADpre2017",
+    Country == "Canada" & Year == 2017 ~ "CAD2017",
+    Country == "Canada" & Year > 2017 ~ "CADpost2017",
+    Country == "USA" & Year < 2011 ~ "USApre2011",
+    Country == "USA" & Year >= 2011 & Year < 2015 ~ "USA2011-2014",
+    Country == "USA" & Year >= 2015 & Year < 2020 ~ "USApost2014"
+  ))
+
+```
+
+# Define offset
+
+```{r, gear.configs}
+
+Season.2.dat <- Season.2.dat %>%
+  mutate(LogArea = log(Fin_sweep.m3),
+         LogAreaMLD = log(Fin_sweep.m3*mean_depth),
+         FID = as.factor(FID)
+  )
+
+```
+
+# Define study plan
+
+General Steps:
+
+Step 1: The Foundation (Mesh & Barrier)
+
+- Because the base model without regard to length bin used a barrier mesh and 37.5 km minimum distance between nodes, as long at the matérn range is appropriate we will keep these assumptions here. If your Range is significantly larger than your 37.5 km cutoff (ideally the range should be at least 2–3x the cutoff), your mesh is fine. 
+
+Step 2: The Error Structure (Distribution)
+
+- Goal: Find which family (Gamma, Tweedie, LogNormal, etc.) best handles the positive catch only.
+- Method: Use the winner from Step 1 and the same Stratified Folds if available.
+- Note: Positive catches account for only 13% of the data and it may not be possible to use cross fold validation.
+
+Step 3: The Ecological Signal (Covariates)
+
+- Goal: Determine which environmental variables (temp, depth, etc.) actually improve predictions.
+- Method: Use the winner from Step 1 & 2 and the same Stratified Folds.
+- Selection: Use ELPD to see if adding a covariate actually adds "information" or just "noise."
+
+Step 4: The Robustness Check (Sensitivity Analysis)
+
+- Goal: Prove your results aren't just a fluke of the fold method.
+- Method: Take your Final "Best" Model and run it through Spatial Block Folds or Random Folds.
+- What you are looking for: If the model performs well in Stratified but terrible in Spatial Blocks, it means your model is good at "filling in gaps" but bad at "extrapolating." If it performs well in both, you have a very powerful, generalizable model.
+
+# Create folds (this is your most restrictive method)
+
+Note that latBins was chosen based on the general survey sampling designs and the annual catch weight distributions across the 5 areas. The distributions were very similar for for the CalCOFI region so these were grouped together.
+
+Originally we combined like-gears and spatial area to ensure that the unique combinations of gear and location. But because we have so few samples when we exclude the absence data, instead of splitting the data across folds (which sometimes returns only 1 or 2 observations), we need to try another approach. 
+
+Here we use Leave-One-Group-Out (LOGO) based on Strata Identity.
+We first look at how many groups we have for combined like-gears and spatial area,
+Then by spatial area only, and lastly by like-gears only.
+
+We compare this against the strata k-fold cross validation.
+
+```{r, test.folds}
+
+# Check the distribution of your strata
+## Note without absence data we are significantly restricted
+Season.2.dat %>%
+  count(GearConfig, latBin) %>%
+  filter(n < 10) # Any results here will be missing from at least one fold
+
+# Check the distribution of your strata
+## Note without absence data we are significantly restricted
+Season.2.dat %>%
+  count(latBin) %>%
+  filter(n < 10) # Any results here will be missing from at least one fold
+
+# Check the distribution of your strata
+## Note without absence data we are significantly restricted
+Season.2.dat %>%
+  count(GearConfig) %>%
+  filter(n < 10) # Any results here will be missing from at least one fold
+
+# We 'force' the folds to respect the the spatial areas only
+Season.2.dat <- Season.2.dat %>%
+  # 'drop = TRUE' removes combinations that don't exist in your data
+  ## But it is not needed here
+  mutate(fold_idx = as.integer(as.factor(latBin))
+  )
+
+# Verify how many unique folds you just created
+n_folds <- max(Season.2.dat$fold_idx)
+print(n_folds)
+# [1] 4
+
+latbin.sampFolds <- Season.2.dat %>% group_by(fold_idx) %>% summarise(n = n()) 
+latbin.sampFolds
+# 1   204
+# 2   597
+# 3   147
+# 4   231
+
+#-------------------------------------------------------------------------------
+# Note that if the cross validation fails with the LOGO approach,
+# You will need to use that strata cross validation
+#-------------------------------------------------------------------------------
+
+Season.2.dat.w.folds.is.made = F
+
+if (Season.2.dat.w.folds.is.made == F){
+  
+  set.seed(123) # Lock the shuffle
+  # We 'force' the folds to respect the gear/bin combinations
+  Season.2.dat.w.folds <- Season.2.dat %>%
+    groupdata2::fold(
+      k = 5, 
+      cat_col = c("GearConfig", "latBin")
+      )
+
+  # SAVE THIS DATASET NOW!!!
+  ## While it is good practice to set.seed before cross validation,
+  ## this is the step where that will cause the starting value to change.
+  saveRDS(Season.2.dat.w.folds, "Season.2.NegBionom2.3-LengethBin.test.w.folds.rds")
+
+}
+
+dim(Season.2.dat.w.folds)
+# [1] 1179  25
+
+sort(unique(Season.2.dat.w.folds$.folds))
+# [1] 1 2 3 4 5
+# Levels: 1 2 3 4 5
+
+sampFolds <- Season.2.dat.w.folds %>% group_by(.folds) %>% summarise(n = n()) 
+sampFolds
+# 1	233			
+# 2	237			
+# 3	234			
+# 4	237			
+# 5	238	
+
+```
+
+# Load Barrier Mesh (without MLD) at 42.5 km minimum distance
+
+Note this is from the full data base model output.
+
+```{r, load.barrier.mesh.mld.37.5km.dist}
+
+# 1. Load your "Full" mesh object (the one you saved)
+barrier2mld_42.5 <- readRDS(
+  file = here(dir, "Final.Results",
+              "barrier2mld_42.5.rds"))
+
+## If greater than >1,000–2,000 nodes, 
+## you’re likely in trouble unless you have a lot of RAM.
+length(barrier2mld_42.5$mesh$loc[,1])
+# [1] 176
+
+# Example plot code from ?add_barrier_mesh
+mesh_df_water_mld_42.5 <- 
+  barrier2mld_42.5$mesh_sf[barrier2mld_42.5$normal_triangles, ]
+mesh_df_land_mld_42.5 <- 
+  barrier2mld_42.5$mesh_sf[barrier2mld_42.5$barrier_triangles, ]
+
+Mesh.with.barrier_mld_42.5 <-
+ggplot() +
+  geom_sf(data = land.barrier) +
+  geom_sf(data = mesh_df_water_mld_42.5, size = 1, colour = "blue") +
+  geom_sf(data = mesh_df_land_mld_42.5, size = 1, colour = "green")
+
+Mesh.with.barrier_mld_42.5
+
+# 2.1 Update it with only total catch (Season.2.dat.w.folds)
+# for full.dat 
+Season.2.dat.w.folds.full <- Season.2.dat.w.folds %>% 
+  select(-c(len.bin, Bin_Haul_Biomass)) %>%
+  mutate(lenBin.nb = sum(lenBin.nb)) %>%
+  distinct() 
+
+# 2.2 Create barrier
+nolength_mesh <- sdmTMB::make_mesh(
+  data = Season.2.dat.w.folds.full, 
+  xy_cols = c("X", "Y"), 
+  mesh = barrier2mld_42.5$mesh # This "borrows" the physical structure of the old mesh
+)
+
+# 3. Update it for your Length Bin data (Season.2.dat.w.folds)
+length_mesh <- sdmTMB::make_mesh(
+  data = Season.2.dat.w.folds, 
+  xy_cols = c("X", "Y"), 
+  mesh = barrier2mld_42.5$mesh # This "borrows" the physical structure of the old mesh
+)
+
+```
+
+# Compare model componets with Presence only
+
+Because we cannot use a hurdle model for length bin distributions, we need to 
+run the model again using only presence data. This is not meant to replace the 
+best fit model but to allow for the assessment of including length bin under 
+the positive catch component of the model.
+
+## For full data
+
+Taking the total catch (excluding absence hauls), identify the best fit model.
+
+### Negative binomial with REML (year effect)
+
+```{r, fit.full.nbinom2.reml.year.effect}
+
+# Fit model
+REMLnbinom2.w.year <- sdmTMB::sdmTMB(
+  lenBin.nb ~ 0 + as.factor(Year),
+  data = Season.2.dat.w.folds.full, 
+  family = nbinom2(link = "log"),
+  mesh = nolength_mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  #spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = ".folds",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 4) # Keep workers low to avoid RAM crash
+
+# Fit model
+REMLnbinom2.w.year.cv <- sdmTMB::sdmTMB_cv(
+  lenBin.nb ~ 0 + as.factor(Year),
+  data = Season.2.dat.w.folds.full, 
+  family = nbinom2(link = "log"),
+  mesh = nolength_mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  #spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = ".folds",
+  silent = TRUE
+)
+
+```
+
+### Negative binomial with REML (year effect)
+
+```{r, fit.full.nbinom2.reml.no.year.effect}
+
+# Fit model
+REMLnbinom2.no.year <- sdmTMB::sdmTMB(
+  lenBin.nb ~ 0,
+  data = Season.2.dat.w.folds.full, 
+  family = nbinom2(link = "log"),
+  mesh = nolength_mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  #spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = ".folds",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 4) # Keep workers low to avoid RAM crash
+
+# Fit model
+REMLnbinom2.no.year.cv <- sdmTMB::sdmTMB_cv(
+  lenBin.nb ~ 0,
+  data = Season.2.dat.w.folds.full, 
+  family = nbinom2(link = "log"),
+  mesh = nolength_mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  #spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = ".folds",
+  silent = TRUE
+)
+
+```
+
+
+Note, spatial folds do not always pass when year effect is in place and without year, the stratified fold random sampling does not always work. Including year effects improves the model.
+
+## For length bin data (3 bins)
+
+For each length bin, identify the best fit model. Note that 0's indicate that 
+that length bin is absent but sardine were caught.
+
+### Three Length Bins nbinom2 w REML (year effect)
+
+```{r, fit.three.lenBin.nbinom2.reml.w.year.effect}
+
+# Fit model
+ThreeLenBinNbinom2.w.year <- sdmTMB::sdmTMB(
+  lenBin.nb ~ 0 + as.factor(Year) + len.bin,
+  data = Season.2.dat.w.folds,  
+  family = nbinom2(link = "log"),
+  mesh = length_mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = ".folds",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 4) # Keep workers low to avoid RAM crash
+
+# Fit model
+ThreeLenBinNbinom2.w.year.cv <- sdmTMB::sdmTMB_cv(
+  lenBin.nb ~ 0 + as.factor(Year) + len.bin,
+  data = Season.2.dat.w.folds,  
+  family = nbinom2(link = "log"),
+  mesh = length_mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = ".folds",
+  silent = TRUE
+)
+
+```
+
+### Three Length Bins nbinom2 w REML (no year effect)
+
+```{r, fit.three.lenBin.nbinom2.reml.no.year.effect}
+
+# Fit model
+ThreeLenBinNbinom2.no.year <- sdmTMB::sdmTMB(
+  lenBin.nb ~ 0 + len.bin,
+  data = Season.2.dat.w.folds,  
+  family = nbinom2(link = "log"),
+  mesh = length_mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = ".folds",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 4) # Keep workers low to avoid RAM crash
+
+# Fit model
+ThreeLenBinNbinom2.no.year.cv <- sdmTMB::sdmTMB_cv(
+  lenBin.nb ~ 0 + len.bin,
+  data = Season.2.dat.w.folds,  
+  family = nbinom2(link = "log"),
+  mesh = length_mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = ".folds",
+  silent = TRUE
+)
+
+```
+ 
+# Create transect data with 2 length bins and no absences
+
+```{r, create.transect.data.2.length.bins.no.absences}
+
+survey.transects.st2 <- TwoSeas.dat %>%
+  select(keys, Year, len.bin, lenBin.nb, Bin_Haul_Biomass, Season, 
+         Fin_sweep.m3, latBin, YearSeas, YearSeas.nm, mean_depth,
+         start_latitude, start_longitude, stop_latitude, 
+         stop_longitude, Country, Species_weight) %>%
+  # Remove non-sardine observations
+  filter(len.bin != "") %>%
+  group_by(keys, Year, Season, Fin_sweep.m3, len.bin, lenBin.nb, Bin_Haul_Biomass, 
+           latBin, YearSeas, YearSeas.nm, mean_depth, start_latitude, 
+           start_longitude, stop_latitude, stop_longitude, Country, 
+           Species_weight) %>%
+  summarise(Total_W_bin = first(Bin_Haul_Biomass),
+            .groups = "keep") %>%
+  ungroup() %>%
+  mutate(
+    merged_bin = case_when(
+      len.bin == "200+" ~ "200plus",
+      len.bin %in% c("150to200", "less150") ~ "less200",
+      TRUE ~ as.character(len.bin) # Keep others as they are
+      )) %>%
+  group_by(keys, Year, Season, Fin_sweep.m3, merged_bin, 
+           latBin, YearSeas, YearSeas.nm, mean_depth, 
+           start_latitude, start_longitude, stop_latitude, 
+           stop_longitude, Country, Species_weight) %>%
+  summarise(Total_W_bin = sum(Total_W_bin),
+            lenBin.nb = sum(lenBin.nb),
+            .groups = "keep") %>%
+  ungroup() 
+
+# Convert to data table
+survey.transects.st2 <- as.data.table(survey.transects.st2)
+
+# 1. Initialize an empty list (NOT a vector or table)
+results_list2 <- list()
+
+for(k in unique(survey.transects.st2$keys)){
+  
+  # Reference the column explicitly within the brackets
+  ori.dat = survey.transects.st2[keys == k]
+  
+  # Create your fill data
+  fill.dat = data.table(
+    keys = rep(ori.dat$keys, 2), 
+    Year = rep(ori.dat$Year, 2),
+    merged_bin = c("less200", "200plus"),
+    Total_W_bin = 0, # data.table automatically repeats single values
+    lenBin.nb = 0, # data.table automatically repeats single values
+    Season = rep(ori.dat$Season, 2),
+    Fin_sweep.m3 = rep(ori.dat$Fin_sweep.m3, 2),
+    latBin = rep(ori.dat$latBin, 2), # Note: corrected from ori.dat$Fin_sweep.m3
+    YearSeas = rep(ori.dat$YearSeas, 2),
+    YearSeas.nm = rep(ori.dat$YearSeas.nm, 2),
+    mean_depth = rep(ori.dat$mean_depth, 2),
+    start_latitude = rep(ori.dat$start_latitude, 2),
+    start_longitude = rep(ori.dat$start_longitude, 2),
+    stop_latitude = rep(ori.dat$stop_latitude, 2), 
+    stop_longitude = rep(ori.dat$stop_longitude, 2),
+    Country = rep(ori.dat$Country, 2), 
+    Species_weight = rep(ori.dat$Species_weight, 2)
+  )
+  
+  # 2. Store the iteration result in the list
+  # We combine ori and fill for this specific key
+  results_list2[[k]] <- rbind(ori.dat, fill.dat)
+}
+
+# 3. Join everything together at once
+new.dat2 <- rbindlist(results_list2)
+  
+new.dat.sum2 <- new.dat2 %>%
+  group_by(keys, Year, Season, Fin_sweep.m3, merged_bin, latBin, YearSeas, 
+           YearSeas.nm, mean_depth, start_latitude, start_longitude, 
+           stop_latitude, stop_longitude, Country, Species_weight) %>%
+  summarise(Species_weight = first(Species_weight),
+            Total_W_bin = sum(Total_W_bin),
+            lenBin.nb = sum(lenBin.nb),
+            .groups = "keep") %>%
+  ungroup()
+# View(new.dat.sum2)  
+  
+final.dat2 <- new.dat.sum2 %>%
+  mutate(FID = keys) %>%
+     ungroup() %>%
+  # Set length bin as factor
+  mutate(merged_bin = as.factor(merged_bin))
+
+# View(final.dat2)
+
+# Note data will be in wgs84
+survey.transects2.sf2 <- 
+  make_transect_sf(final.dat2, crs = 4326) 
+
+survey.transects2.sf.clip2 <- survey.transects2.sf2 %>%
+  mutate(X = st_coordinates(st_centroid(.))[,1],
+         Y = st_coordinates(st_centroid(.))[,2]) %>%
+  filter(Y < 52)
+
+range(survey.transects2.sf.clip2$Y)
+# [1] 31.5053  50.6905
+
+## Create X Y columns and extract polygon centers
+TwoSeas.dat2 <- survey.transects2.sf.clip2 %>%
+  # Project the data to Albers Conical Equal Area
+  st_transform(., crs = aea_custom) %>%
+  # Extract the centre of the transect (this is in km)
+  mutate(X = st_coordinates(st_centroid(.))[,1]/1000,
+         Y = st_coordinates(st_centroid(.))[,2]/1000) %>%
+  st_drop_geometry() 
+
+range(TwoSeas.dat2$X)
+# [1] -308.2030  668.1958
+
+range(TwoSeas.dat2$Y)
+# [1] -946.052 1206.229
+
+``` 
+
+# Split data by Season
+
+Note that there is no Canadian data for the spring.
+
+## For Season 2 define spatial boundaries
+
+```{r, sptl.boundaries2.wo.absence}
+
+# Filter the data frame
+Season.2.dat2 <- TwoSeas.dat2 %>%
+  filter(Season == "Summer" & !Year %in% c(2009:2011) &
+           # To be able to compare with ROMS
+           Year < 2021
+         ) 
+
+# Delineate spatial domain
+Season.2.dat2 <- 
+  Season.2.dat2[Season.2.dat2$X >= min(Season.2.dat2$X) & 
+                 Season.2.dat2$X <= max(Season.2.dat2$X) & 
+                 Season.2.dat2$Y >= min(Season.2.dat2$Y) & 
+                 Season.2.dat2$Y <= max(Season.2.dat2$Y), ]
+
+# Function to test for values ending in .1
+integerFunction <- function(x) {
+  abs(x %% 1 - 0.1) < 1e-8
+}
+
+vals <- integerFunction(est.missing.time2) 
+
+# Apply the function to filter values ending in .1
+est.missing.time.S2 <- est.missing.time2[vals]
+est.missing.time.S2
+# [1] 2009.1 2010.1 2011.1 2020.1
+
+```
+
+# Group like gear configurations
+
+This is based on the literature and survey reports across the US and Canadian Survey segments. Each group used the same gear configuration and overall strategy, but may have more samples in some years than others. The general gear opening dimensions are also comparable within each group.
+
+```{r, gear.configs.wo.absence}
+
+Season.2.dat2 <- Season.2.dat2 %>%
+  mutate(GearConfig = case_when(
+    Country == "Canada" & Year < 2017 ~ "CADpre2017",
+    Country == "Canada" & Year == 2017 ~ "CAD2017",
+    Country == "Canada" & Year > 2017 ~ "CADpost2017",
+    Country == "USA" & Year < 2011 ~ "USApre2011",
+    Country == "USA" & Year >= 2011 & Year < 2015 ~ "USA2011-2014",
+    Country == "USA" & Year >= 2015 & Year < 2020 ~ "USApost2014"
+  ))
+
+```
+
+# Define offset
+
+```{r, gear.configs.wo.absence}
+
+Season.2.dat2 <- Season.2.dat2 %>%
+  mutate(LogArea = log(Fin_sweep.m3),
+         LogAreaMLD = log(Fin_sweep.m3*mean_depth),
+         FID = as.factor(FID)
+  )
+
+```
+
+# Define study plan
+
+General Steps:
+
+Step 1: The Foundation (Mesh & Barrier)
+
+- Because the base model without regard to length bin used a barrier mesh and 37.5 km minimum distance between nodes, as long at the matérn range is appropriate we will keep these assumptions here. If your Range is significantly larger than your 37.5 km cutoff (ideally the range should be at least 2–3x the cutoff), your mesh is fine. 
+
+Step 2: The Error Structure (Distribution)
+
+- Goal: Find which family (Gamma, Tweedie, LogNormal, etc.) best handles the positive catch only.
+- Method: Use the winner from Step 1 and the same Stratified Folds if available.
+- Note: Positive catches account for only 13% of the data and it may not be possible to use cross fold validation.
+
+Step 3: The Ecological Signal (Covariates)
+
+- Goal: Determine which environmental variables (temp, depth, etc.) actually improve predictions.
+- Method: Use the winner from Step 1 & 2 and the same Stratified Folds.
+- Selection: Use ELPD to see if adding a covariate actually adds "information" or just "noise."
+
+Step 4: The Robustness Check (Sensitivity Analysis)
+
+- Goal: Prove your results aren't just a fluke of the fold method.
+- Method: Take your Final "Best" Model and run it through Spatial Block Folds or Random Folds.
+- What you are looking for: If the model performs well in Stratified but terrible in Spatial Blocks, it means your model is good at "filling in gaps" but bad at "extrapolating." If it performs well in both, you have a very powerful, generalizable model.
+
+# Create folds (this is your most restrictive method)
+
+Note that latBins was chosen based on the general survey sampling designs and the annual catch weight distributions across the 5 areas. The distributions were very similar for for the CalCOFI region so these were grouped together.
+
+Originally we combined like-gears and spatial area to ensure that the unique combinations of gear and location. But because we have so few samples when we exclude the absence data, instead of splitting the data across folds (which sometimes returns only 1 or 2 observations), we need to try another approach. 
+
+Here we use Leave-One-Group-Out (LOGO) based on Strata Identity.
+We first look at how many groups we have for combined like-gears and spatial area,
+Then by spatial area only, and lastly by like-gears only.
+
+We compare this against the strata k-fold cross validation.
+
+```{r, test.folds.wo.absence}
+
+# Check the distribution of your strata
+## Note without absence data we are significantly restricted
+Season.2.dat2 %>%
+  count(GearConfig, latBin) %>%
+  filter(n < 10) # Any results here will be missing from at least one fold
+
+# Check the distribution of your strata
+## Note without absence data we are significantly restricted
+Season.2.dat2 %>%
+  count(latBin) %>%
+  filter(n < 10) # Any results here will be missing from at least one fold
+
+# Check the distribution of your strata
+## Note without absence data we are significantly restricted
+Season.2.dat2 %>%
+  count(GearConfig) %>%
+  filter(n < 10) # Any results here will be missing from at least one fold
+
+# We 'force' the folds to respect the the spatial areas only
+Season.2.dat2 <- Season.2.dat2 %>%
+  # 'drop = TRUE' removes combinations that don't exist in your data
+  ## But it is not needed here
+  mutate(fold_idx = as.integer(as.factor(latBin))
+  )
+
+# Verify how many unique folds you just created
+n_folds2 <- max(Season.2.dat2$fold_idx)
+print(n_folds2)
+# [1] 4
+
+latbin.sampFolds2 <- Season.2.dat2 %>% group_by(fold_idx) %>% summarise(n = n()) 
+latbin.sampFolds2
+# 1	136			
+# 2	398			
+# 3	98			
+# 4	154	
+
+#-------------------------------------------------------------------------------
+# Note that if the cross validation fails with the LOGO approach,
+# You will need to use that strata cross validation
+#-------------------------------------------------------------------------------
+
+Season.2.dat2.w.folds.is.made = T
+
+if (Season.2.dat2.w.folds.is.made == F){
+  
+  set.seed(123) # Lock the shuffle
+  # We 'force' the folds to respect the gear/bin combinations
+  Season.2.dat2.w.folds <- Season.2.dat2 %>%
+    groupdata2::fold(
+      k = 5, 
+      cat_col = c("GearConfig", "latBin")
+      )
+
+  # SAVE THIS DATASET NOW!!!
+  ## While it is good practice to set.seed before cross validation,
+  ## this is the step where that will cause the starting value to change.
+  saveRDS(Season.2.dat2.w.folds, "Season.2.NegBionom2.2-LengethBin.test.w.folds.rds")
+
+}
+
+dim(Season.2.dat2.w.folds)
+# [1] 786   25
+
+unique(Season.2.dat2.w.folds$.folds)
+# [1] 1 4 5 3 2
+# Levels: 1 2 3 4 5
+
+sampFolds2 <- Season.2.dat2.w.folds %>% group_by(.folds) %>% summarise(n = n()) 
+sampFolds2
+# 1	155			
+# 2	156			
+# 3	159			
+# 4	156		
+# 5	160
+
+```
+
+# Define new Barrier Mesh (without MLD) at 37.5 km minimum distance wo absence
+
+Note this is from the full data base model output.
+
+```{r, new.barrier.mesh}
+
+# 2. Update it for your Length Bin data (Season.2.dat2.w.folds)
+# This keeps the exact same triangles/barrier but matches the 522 rows
+length_mesh2 <- sdmTMB::make_mesh(
+  data = Season.2.dat2.w.folds, 
+  xy_cols = c("X", "Y"), 
+  mesh = barrier2mld_42.5$mesh # This "borrows" the physical structure of the old mesh
+)
+
+```
+
+### Two Length Bins nbinom2 w REML (year effect)
+
+```{r, fit.two.lenBin.nbinom2.reml.w.year.effect}
+
+# Fit model
+TwoLenBinNbinom2.w.year <- sdmTMB::sdmTMB(
+  lenBin.nb ~ 0 + as.factor(Year) + merged_bin,
+  data = Season.2.dat2.w.folds,  
+  family = nbinom2(link = "log"),
+  mesh = length_mesh2,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged_bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = ".folds",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 4) # Keep workers low to avoid RAM crash
+
+# Fit model
+TwoLenBinNbinom2.w.year.cv <- sdmTMB::sdmTMB_cv(
+  lenBin.nb ~ 0 + as.factor(Year) + merged_bin,
+  data = Season.2.dat2.w.folds,  
+  family = nbinom2(link = "log"),
+  mesh = length_mesh2,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged_bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = ".folds",
+  silent = TRUE
+)
+
+```
+
+### Two Length Bins nbinom2 w REML (no year effect)
+
+```{r, fit.two.lenBin.nbinom2.reml.no.year.effect}
+
+# Fit model
+TwoLenBinNbinom2.no.year <- sdmTMB::sdmTMB(
+  lenBin.nb ~ 0 + merged_bin,
+  data = Season.2.dat2.w.folds,  
+  family = nbinom2(link = "log"),
+  mesh = length_mesh2,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged_bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = ".folds",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 4) # Keep workers low to avoid RAM crash
+
+# Fit model
+TwoLenBinNbinom2.no.year.cv <- sdmTMB::sdmTMB_cv(
+  lenBin.nb ~ 0 + merged_bin,
+  data = Season.2.dat2.w.folds,  
+  family = nbinom2(link = "log"),
+  mesh = length_mesh2,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged_bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = ".folds",
+  silent = TRUE
+)
+
+```
+
+# Create summary table
+
+```{r, model.selection.table}
+
+# Helper to safely extract metrics or return NA if the model failed
+get_metrics <- function(objs, nm) {
+  
+  #--------------------------------------------------------------------
+  # 1. Check if the objects even exist/fitted successfully
+  #--------------------------------------------------------------------
+  # Suite label (defaults to "Unassigned" if you forget to add it)
+  suite_nm <- if(!is.null(objs$suite)) objs$suite else "Unassigned"
+  
+  # Basic Error Handling
+  if (is.null(objs$main) || is.null(objs$cv)) {
+    return(tibble(
+      Suite = suite_nm, Model = nm, `Total ELPD` = NA, 
+      `Main Sanity` = "Fit Error", `CV Sanity` = "Fit Error", `Folds Passed` = "0/5"
+    ))
+  }
+  
+  #--------------------------------------------------------------------  
+  # 2. Wrap the extraction in try() just in case the CV object is 
+  # corrupted
+  #--------------------------------------------------------------------
+  res <- try({
+    pointwise <- objs$cv$data$cv_loglik
+    folds <- objs$cv$fold_loglik
+    n_obs <- length(pointwise)
+    k_folds <- length(folds)
+    
+    # PW & FW Calculations
+    pw_sd <- sd(pointwise, na.rm = TRUE)
+    pw_se <- sqrt(n_obs * var(pointwise, na.rm = TRUE))
+    fw_sd <- sd(folds, na.rm = TRUE)
+    fw_se <- sqrt(k_folds * var(folds, na.rm = TRUE))
+    
+    # Sanity checks
+    main_s <- all(unlist(sdmTMB::sanity(objs$main)))
+    fold_checks <- map_lgl(objs$cv$models, ~ all(unlist(sdmTMB::sanity(.x))))
+    
+    tibble(
+      Suite = suite_nm,
+      Model = nm,
+      `Total ELPD` = objs$cv$sum_loglik,
+      `PW SD` = round(pw_sd, 3), `PW SE` = round(pw_se, 2),
+      `FW SD` = round(fw_sd, 2), `FW SE` = round(fw_se, 2),
+      `Main Sanity` = if(main_s) "Pass" else "Fail",
+      `CV Sanity` = if(all(fold_checks)) "OK" else "! Warning",
+      `Folds Passed` = paste0(sum(fold_checks), "/", k_folds)
+    )
+  }, silent = TRUE)
+  
+  if (inherits(res, "try-error")) return(tibble(Suite = suite_nm, Model = nm, 
+                                                `Main Sanity` = "Extract Error"))
+  return(res)
+}
+
+#--------------------------------------------------------------------  
+# 3. Run the loop
+#-------------------------------------------------------------------- 
+
+Initial.model.selection.is.made = T
+
+if (Initial.model.selection.is.made == F){
+  # Collect all your objects into one list
+  # (Make sure these objects exist in your environment first!)
+  all_results <- list(
+    "NegativeBionomial2 REML + year: Log-link" = 
+      list(main = REMLnbinom2.w.year, cv = REMLnbinom2.w.year.cv,
+           suite = "1. Use of lengths and years"),
+    "NegativeBionomial2 REML: Log-link" = 
+      list(main = REMLnbinom2.no.year, cv = REMLnbinom2.no.year.cv,
+           suite = "1. Use of lengths and years"),
+    "NegativeBionomial2 year + 3 lengthbins: Log-link" = 
+      list(main = ThreeLenBinNbinom2.w.year, cv = ThreeLenBinNbinom2.w.year.cv,
+           suite = "1. Use of lengths and years"),
+    "NegativeBionomial2 3 lengthbins: Log-link" = 
+      list(main = ThreeLenBinNbinom2.no.year, cv = ThreeLenBinNbinom2.no.year.cv,
+           suite = "1. Use of lengths and years"),
+    "NegativeBionomial2 2 lengthbins: Log-link" = 
+      list(main = TwoLenBinNbinom2.no.year, cv = TwoLenBinNbinom2.no.year.cv,
+           suite = "1. Use of lengths and years"),
+    "NegativeBionomial2 year + 2 lengthbins: Log-link" = 
+      list(main = TwoLenBinNbinom2.w.year, cv = TwoLenBinNbinom2.w.year.cv,
+           suite = "1. Use of lengths and years")
+    # Just keep adding pairs here as you run them
+  )
+
+  model_decision_table <- imap_dfr(all_results, ~get_metrics(.x, .y)) %>%
+    group_by(Suite) %>%  # This makes Delta ELPD relative to the best in THAT suite
+    arrange(desc(`Total ELPD`), .by_group = TRUE) %>%
+    mutate(`Delta ELPD` = round(`Total ELPD` - first(`Total ELPD`), 2)) %>%
+    ungroup() %>%
+    select(Suite, Model, `Total ELPD`, `Delta ELPD`, everything())
+
+  print(model_decision_table)
+  
+  }
+
+View(model_decision_table)
+
+# Save the model selection table
+fwrite(model_decision_table, 
+       here(dir, "Final.Results", "NegativeBionom2_justification.model.decision.table.csv"), 
+       sep = ",")
+
+```

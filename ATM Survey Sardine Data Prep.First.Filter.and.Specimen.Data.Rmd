@@ -1,0 +1,980 @@
+---
+title: "ATM Survey Sardine Data Prep"
+author: "Stephanie Hopkins"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE
+    
+---
+
+```{r setup, include=FALSE}
+
+rm(list=ls())
+gc()
+
+load.lib <- c("tidyverse", "data.table", "sf", "here")
+
+install.lib <- load.lib[!load.lib %in% installed.packages()]
+
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+
+dir <- here(getwd())
+
+survey.path <- "ATM CPS Survey"
+
+```
+
+# Verify data
+
+The data stored and originally accessed on ERDDAP has moved to www.fisheries.noaa.gov/import/item/20693 and has changed since the start of the study. To verify that the original files are correct check the CPS_Trawl_Life_History_Haul_Catch_Data.csv and the CPS_Trawl_Life_History_Specimen_Data.csv and adjust accordingly.
+
+# From the CPS_Trawl_LifeHistory_Haulcatch Table:
+
+1) subsample_weight: Description - Summed weight of all *xth* individuals listed in the subsample_count column. Units - kg. Note - Five random full baskets from the entire catch (all species) are take as a subsample. Subsample weight is almost never extrapolated (except when there are > 5 baskets). Following sorting of species, if there are > 75 individuals in a basket for example, remaining_weight becomes the unsampled weight for that species. To get total weight of species in a given haul, sum subsample_weight and remaining_weight.
+       
+# From the CPS_Trawl_LifeHistory_Specimen Table:
+
+1) weight: Description - The weight of an individual of species *e* in the subsample *i* randomly selected
+Units - g. Note - There may be a mix of other species included in the data and it is important to compare the subsample_weight to the sum of individual measures weights for species *e*.
+       
+2) Length: Description - The length of an individual of species *e* in the subsample *i* randomly selected. Units - mm. Note - Note that depending on the species, this can be standard length (SL) or fork length (FL).
+       
+# Load and explore haul catch data
+
+```{r, read.haul.data}
+
+# Load catch weight
+LifeHistoryHaulCatch <- 
+  fread(
+    here(dir, "Data", survey.path,
+         "CPS_Trawl_LifeHistory_Haulcatch.new.server.version.csv"), 
+        sep = ",") 
+
+colnames(LifeHistoryHaulCatch)
+#  [1] "cruise"                  "ship"                   
+#  [3] "haul"                    "collection"             
+#  [5] "startLatitude"           "startLongitude"         
+#  [7] "stopLatitude"            "stopLongitude"          
+#  [9] "equilibriumTime"         "haulBackTime"           
+# [11] "surfaceTemp"             "surfaceTempMethod"      
+# [13] "shipSpeedThrougtheWater" "itisTSN"                
+# [15] "scientificName"          "subSampleCount"         
+# [17] "subSampleWeightkg"       "remainingWeightkg"      
+# [19] "presenceOnly"           
+
+# Remove unnescessary columns
+LifeHistoryHaulCatch <- LifeHistoryHaulCatch[,-c(11:13,19)]
+
+# Rename to match old data version for consistency 
+names(LifeHistoryHaulCatch) <- 
+  c("cruise", "ship", "haul", "collection", 
+    "start_latitude", "start_longitude", 
+    "stop_latitude", "stop_longitude",
+    "equilibrium_time", "haulback_time",
+    "itis_tsn", "scientific_name",
+    "subsample_count", "subsample_weight",
+    "remaining_weight"
+    )
+
+LifeHistoryHaulCatch <- LifeHistoryHaulCatch %>%
+  mutate(keys.temp = paste(cruise, ship, haul, collection,
+                           itis_tsn, equilibrium_time, 
+                           sep = ""),
+         keys = paste(cruise, ship, haul, collection,
+                      itis_tsn, equilibrium_time, 
+                      start_latitude, start_longitude, 
+                      stop_latitude, stop_longitude, 
+                      sep = "_")
+         )
+
+# Not all hauls have a remaining_weight (force these values to 0)
+LifeHistoryHaulCatch$remaining_weight[is.na(LifeHistoryHaulCatch$remaining_weight)] <- 0
+
+# Explore data
+length(unique(LifeHistoryHaulCatch$cruise))
+# [1] 36 (35 in old version)
+length(unique(LifeHistoryHaulCatch$collection))
+# [1] 2780 (2676 in old version)
+length(unique(LifeHistoryHaulCatch$ship))
+# [1] 8 (8 in old version)
+length(unique(LifeHistoryHaulCatch$itis_tsn))
+# [1] 273 (266 in old version)
+
+# Bind coordinates
+LifeHistoryHaulCatch <- LifeHistoryHaulCatch %>% 
+  mutate(beginTransect = 
+           paste(start_longitude, ",", start_latitude, sep = ""), 
+         endTransect = 
+           paste(stop_longitude, ",", stop_latitude, sep = "")) %>%
+  mutate(transect.coords = 
+           paste(beginTransect, ",", endTransect, sep = ""))
+
+length(unique(LifeHistoryHaulCatch$transect.coords))
+# [1] 2780 (2676 in old version)
+
+colnames(LifeHistoryHaulCatch)
+#  [1] "cruise"           "ship"             "haul"            
+#  [4] "collection"       "start_latitude"   "start_longitude" 
+#  [7] "stop_latitude"    "stop_longitude"   "equilibrium_time"
+# [10] "haulback_time"    "itis_tsn"         "scientific_name" 
+# [13] "subsample_count"  "subsample_weight" "remaining_weight"
+# [16] "beginTransect"    "endTransect"      "transect.coords"
+
+unique(is.na(LifeHistoryHaulCatch))
+
+# Add time zone to column name
+LifeHistoryHaulCatch <- LifeHistoryHaulCatch %>%
+  mutate(
+    haulback_time.utc = haulback_time,
+    equilibrium_time.utc = equilibrium_time) %>%
+  select(-c(haulback_time, equilibrium_time))
+
+summary(LifeHistoryHaulCatch)
+
+sum.tab <- LifeHistoryHaulCatch %>% 
+  group_by(equilibrium_time.utc) %>%
+  mutate(collect.check = n_distinct(collection)) %>%
+  ungroup()
+
+sum.tab.check <- sum.tab %>% 
+  filter(collect.check > 1)
+
+dim(sum.tab.check)
+# [1] 31 21
+
+```
+
+# Load specimen data set
+
+```{r, read.sample.data}
+
+# Load catch samples used to estimate length frequency distribution
+LifeHistorySpecimen <- 
+  fread(
+    here(dir, "Data", survey.path,
+         "CPS_Trawl_LifeHistory_Specimen.new.server.version.csv"),
+        sep = ",")
+
+colnames(LifeHistorySpecimen)
+#  [1] "cruise"            "ship"             
+#  [3] "haul"              "collection"       
+#  [5] "Latitude"          "Longitude"        
+#  [7] "Time"              "itisTSN"          
+#  [9] "scientificName"    "specimenNumber"   
+# [11] "sex"               "isRandomSample"   
+# [13] "weightg"           "standardLength_mm"
+# [15] "forkLength_mm"     "totalLength_mm"   
+# [17] "mantleLength_mm"   
+
+# Remove unnescessary columns
+LifeHistorySpecimen <- LifeHistorySpecimen[,-c(11,15:17)]
+
+# Rename to match old data version for consistency 
+names(LifeHistorySpecimen) <- 
+  c("cruise", "ship", "haul", "collection", 
+    "latitude", "longitude", "time", "itis_tsn",
+    "scientific_name", "specimen_number",
+    "is_random_sample", "weight", "standard_length"
+    )
+
+# Create unique identifier.
+## Note this is temporary because we do not know if time
+## corresponds to equilibrium_time or haulback_time
+LifeHistorySpecimen <- LifeHistorySpecimen %>%
+  mutate(keys.temp = paste(cruise, ship, haul, collection,
+                           itis_tsn, time, sep = "")
+         )
+
+# Check the summary statistics for sardine
+test.sardine <- LifeHistorySpecimen %>%
+  filter(scientific_name == "Sardinops sagax")
+
+summary(test.sardine)
+
+# Check for sardine entries where there is no weight
+test.sardine2 <- LifeHistorySpecimen %>%
+  filter(scientific_name == "Sardinops sagax" & is.na(weight))
+
+# Find number of observations without a weight
+dim(test.sardine2)
+# [1] 78 14
+
+# Return a count of unique collections (trip ids)
+length(unique(test.sardine2$collection))
+# [1] 8
+
+# Test values where no length is provided
+test.sardine3 <- LifeHistorySpecimen %>%
+  filter(scientific_name == "Sardinops sagax" &
+           is.na(standard_length))
+
+dim(test.sardine3)
+# [1] 8 14
+
+test.sardine3INtest.sardine2 <- test.sardine2 %>%
+  filter(keys.temp %in% test.sardine3$keys.temp)
+
+#Check if there are shared entries
+dim(test.sardine3INtest.sardine2)
+# [1]  0 14
+
+```
+
+# Merge specimen and haul data
+
+```{r, catch.per.haul}
+
+# Find like column ids
+colnames(LifeHistorySpecimen) %in% colnames(LifeHistoryHaulCatch)
+#  [1]  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE  TRUE  TRUE FALSE
+# [11] FALSE FALSE FALSE FALSE
+
+# View names of column ids
+joinKeys <- LifeHistorySpecimen %>% select(c(1:4,8:9)) %>%
+  names()
+joinKeys
+# [1] "cruise"          "ship"            "haul"           
+# [4] "collection"      "itis_tsn"        "scientific_name"
+
+# Join data sets by column ids and calculate haul expansion factor
+CatchWeightLengthPerHaul <- inner_join(LifeHistoryHaulCatch,
+                                       LifeHistorySpecimen, 
+                                       by = joinKeys) %>% 
+  distinct()
+
+summary(CatchWeightLengthPerHaul)
+
+# View the random sample notations
+unique(CatchWeightLengthPerHaul$is_random_sample)
+# [1] "Y" "N" NA
+
+# How many unique collections
+length(unique(CatchWeightLengthPerHaul$collection))
+# [1] 1998
+
+# Check if keys.temp is identical between files
+identical(CatchWeightLengthPerHaul$keys.temp.x, 
+          CatchWeightLengthPerHaul$keys.temp.y) 
+# [1] TRUE
+# This confirms that time is equivalent to equilibrium time
+
+# Remove extra column
+CatchWeightLengthPerHaul <-
+  CatchWeightLengthPerHaul[,-c("time", "keys.temp.x", "keys.temp.y")]
+
+```
+
+# Save entries where no specimen data corresponds
+
+```{r, no.specimen.data.present}
+
+no.specimen.dat <- LifeHistoryHaulCatch %>%
+  filter(!keys.temp %in% LifeHistorySpecimen$keys.temp &
+           scientific_name == "Sardinops sagax"
+         )
+
+dim(no.specimen.dat)
+# [1] 11  20
+
+fwrite(
+  no.specimen.dat, 
+  here(dir, "Data", survey.path,
+       "ATM.Survey.no.corresponding.specimen.table.entry.csv"),
+       sep = ",") 
+
+```
+
+Note that for the data without corresponding specimen data, this will be investigated separately.
+
+# Save entries where no subsample weight is present
+
+```{r, filter.haul.data.w.no.subsample.wght}
+
+#-------------------------------
+# Check values where there is 
+# no subsample_weight
+#-------------------------------
+no.sardine.subsample.weights <- 
+  CatchWeightLengthPerHaul %>%
+  filter(is.na(subsample_weight) & 
+           scientific_name == "Sardinops sagax")
+
+# Check how many rows
+dim(no.sardine.subsample.weights)
+# [1] 70  25
+
+# See what is going on
+# View(no.sardine.subsample.weights)
+## These won't matter they all correspond 
+## to 2004 data
+
+#---------------------------------
+# These are the non-random samples.
+# Check if the there are 
+# corresponding random samples per 
+# key
+#---------------------------------
+# Check values where there is subsample_weight
+sardine.w.subsample.weights <- 
+  CatchWeightLengthPerHaul %>%
+  filter(keys %in% no.sardine.subsample.weights$keys & 
+           scientific_name == "Sardinops sagax" & 
+           !is.na(subsample_weight))
+
+dim(sardine.w.subsample.weights)  
+# [1] 0 25
+
+#-------------------------------
+# Store output for when there 
+# is no subsample_weight
+#-------------------------------
+fwrite(
+  no.sardine.subsample.weights, 
+  here(dir, "Data", survey.path,
+       "ATM.Survey.no.subsample_weight.table.entry.csv"),
+       sep = ",") 
+
+#---------------------------------
+# Sum the specimen data to get
+# subsample_weight value
+#---------------------------------
+
+no.sardine.subsample.weights.fin <- 
+  no.sardine.subsample.weights %>%
+  group_by(keys) %>%
+  mutate(weight = weight/1000) %>%
+  mutate(subsample_weight = sum(weight)) %>%
+  ungroup()
+
+unique(no.sardine.subsample.weights.fin$subsample_weight)
+# [1] 6.9415
+
+unique(no.sardine.subsample.weights.fin$remaining_weight)
+# [1] 147.634
+
+```
+
+# Check values where there are no specimens measured  
+
+This focuses on subsample_count
+
+```{r, filter.haul.data.w.no.subsubsample.count.data}
+
+no.sardine.sample.counts <- CatchWeightLengthPerHaul  %>%
+  filter(is.na(subsample_count) & 
+           scientific_name == "Sardinops sagax")
+
+dim(no.sardine.sample.counts)
+# [1] 0   25
+
+```
+
+# Apply quality check of remaining sample data
+
+## Create indices
+
+If the total sampled weight is equal to the subsample_weight, they the quality index is 0. Otherwise, it means there is a discrepancy.
+
+```{r, all.other.specimen.entries}
+
+#-------------------------------
+# For Sardine
+#-------------------------------
+Haul.weights.sar <- CatchWeightLengthPerHaul %>%
+  # Isolate only sardine
+  filter(scientific_name == "Sardinops sagax" &
+           # Filter out known issues
+           !is.na(subsample_weight)) 
+
+#-------------------------------
+# Make sure random samples are 
+# not already present
+#-------------------------------
+match.keys <- no.sardine.subsample.weights.fin %>%
+  filter(keys %in% Haul.weights.sar$keys)
+dim(match.keys)
+# [1]  0 25
+
+#-------------------------------
+# Join with adjusted 
+# sardine.subsample.weights.fin
+#-------------------------------
+Haul.weights.sar <- rbind(Haul.weights.sar, 
+                          no.sardine.subsample.weights.fin
+                          ) %>%
+  # Make sure they are unique
+  distinct()
+
+#-------------------------------
+# Create quality.index
+#-------------------------------
+Haul.weights.sar <- Haul.weights.sar %>%
+  # Group by transect
+  group_by(keys) %>% 
+  # Sum the sampled and unsampled species weight to get total 
+  # species weight
+  mutate(Species_weight = subsample_weight+remaining_weight,
+         # Convert g to kg for individual samples
+         weight = 
+           case_when(!is.na(weight) ~ weight/1000,
+                     is.na(weight) ~ NA
+                     )
+         ) %>% 
+  # See if the summed specimen weight is less than or greater 
+  # than total weight of the random sample
+  mutate(quality.indic = round(sum(weight)-subsample_weight,3)) %>%
+  ungroup() %>%
+  mutate(FID = seq(1,nrow(.),1))
+
+#-------------------------------
+# How many hauls with 
+# corresponding specimen 
+# data?
+#-------------------------------
+dim(Haul.weights.sar)
+# [1] 18500    28
+
+```
+
+## Check quality indices
+
+First double check the data where the quality indices are 0. Do they make sense? Are there missing values, etc.?
+
+### Check the entries with quality indices of 0
+
+```{r, double.check.sardine.quality.indices}
+
+#-------------------------------
+# How many hauls with
+# corresponding specimen
+# data and quality indices
+# are equal to zero?
+#-------------------------------
+Haul.weights.sar.clean <- 
+  Haul.weights.sar %>%
+  filter(quality.indic == 0) 
+
+dim(Haul.weights.sar.clean)
+# [1] 13184    28
+
+#-------------------------------
+# How many hauls with
+# corresponding specimen
+# data and quality indices
+# are equal to zero and
+# where number of entries 
+# equal the sample count
+#-------------------------------
+Haul.weights.sar %>%
+  filter(quality.indic == 0) %>%
+  group_by(keys) %>%
+  filter(max(specimen_number) ==
+           subsample_count) %>%
+  dim()
+# [1] 12745  28
+
+#-------------------------------
+# Investigate hauls with
+# corresponding specimen
+# data and quality indices
+# equal to zero, but where number 
+# of entries is not equal the 
+# sample count
+#-------------------------------
+test.quality.good.but.bad.spec <-
+  Haul.weights.sar %>%
+  filter(quality.indic == 0) %>%
+  group_by(keys) %>%
+  filter(max(specimen_number) !=
+           subsample_count) %>%
+  ungroup()
+# View(test.quality.good.but.bad.spec)
+
+# It seems there have been some 
+# samples removed, but they have 
+# already been accounted for in 
+# the weight proportioning
+
+#----------------------------------
+# Investigate na values
+#----------------------------------
+unique(is.na(Haul.weights.sar.clean))
+# looks like we are no longer missing
+# individual specimen weights, but 
+# we have some cases we do not know
+# length
+
+#----------------------------------
+# How do the weights look
+#----------------------------------
+Haul.weights.sar.clean2 <- 
+  Haul.weights.sar.clean %>%
+  filter(!is.na(standard_length))
+
+range(Haul.weights.sar.clean2$weight)
+# [1] 0.0005 0.3395
+# View(Haul.weights.sar.clean2)
+
+# These really small weights are for
+# sardines less than 4 cm in length
+# and describes poorly conditioned
+# post-larval phase individuals
+
+```
+
+#### Save entries where there are no lengths
+
+Drop the observations where we do not have length observations and save them for haul interpolation.
+
+```{r, filter.haul.data.w.no.length}
+
+Haul.weights.sar.no.length <-
+  Haul.weights.sar.clean %>%
+  # Isolate only sardine
+  filter(scientific_name == "Sardinops sagax" &
+           is.na(standard_length)) 
+
+dim(Haul.weights.sar.no.length)
+# [1] 8  28
+
+fwrite(Haul.weights.sar.no.length, 
+  here(dir, "Data", survey.path,
+       "ATM.Survey.no.length.table.entry.csv"),
+       sep = ",") 
+
+```
+
+### Check the entries with quality indices not equal to 0
+
+This will isolate cases where subsample weight total specimen weight don't match.
+
+#### For historic paper write up, filter out the viable cruises
+
+Note: keep all the data because a follow up study will be done and we will need all years for that!
+
+```{r, historic.paper}
+
+colnames(CatchWeightLengthPerHaul)
+unique(CatchWeightLengthPerHaul$scientific_name)
+
+# Find the number of hauls with corresponding specimens
+test.total.hauls <- CatchWeightLengthPerHaul %>%
+  filter(cruise > 200804 & cruise < 202103) %>%
+  filter(!cruise %in% c(200904, 201004, 201104, 201204, 201304, 201404, 
+                        201504, 201604, 201704))
+length(unique(test.total.hauls$keys))
+# [1] 2236
+
+# Find the number of hauls without corresponding specimens
+test.hauls.no.specimens <- no.specimen.dat %>%
+  filter(cruise > 200804 & cruise < 202103) %>%
+  filter(!cruise %in% c(200904, 201004, 201104, 201204, 201304, 201404, 
+                        201504, 201604, 201704))
+length(unique(test.hauls.no.specimens$keys))
+# [1] 4
+
+
+test <- Haul.weights.sar %>%
+  filter(cruise > 200804 & cruise < 202103) %>%
+  filter(!cruise %in% c(200904, 201004, 201104, 201204, 201304, 201404, 
+                        201504, 201604, 201704))
+length(unique(test$keys))
+# [1] 300
+
+test2 <- test %>%
+  filter(quality.indic != 0 | is.na(quality.indic))
+length(unique(test2$keys))
+# [1] 10
+length(unique(test2$keys))/length(unique(test$keys))*100
+# [1] 3.333333
+
+test3 <- test %>% filter(is.na(standard_length))
+length(unique(test3$keys))
+# [1] 2 
+
+test4 <- test2 %>% 
+  filter(max(specimen_number) > subsample_count)
+length(unique(test4$keys))
+# [1] 10
+
+test5 <- test4 %>%
+  filter(specimen_number <= subsample_count) %>% 
+  mutate(quality.indic2 = 
+           round(sum(weight)-subsample_weight, 3)) %>%
+  ungroup() %>%
+  distinct() %>% 
+  filter(quality.indic2 != 0)
+length(unique(test5$keys))
+# [1] 10
+
+```
+
+#### For the full data set
+
+```{r, potential.issues.in.quality}
+
+# Check how close the total weight is with the summed sample weight.
+range(Haul.weights.sar$quality.indic, na.rm = T)
+# [1]  -6.935  6.929
+
+# Find entries where the quality is in question
+quality.chcks <- Haul.weights.sar %>%
+  filter(quality.indic != 0 |
+           is.na(quality.indic))
+
+dim(quality.chcks)
+# [1] 5316   28
+
+range(quality.chcks$equilibrium_time.utc)
+# [1] "2003-07-10 07:36:00 UTC" "2024-08-03 10:27:00 UTC"
+
+length(unique(quality.chcks$collection))
+# [1] 97
+
+```
+
+#### Check if there are partial specimens
+
+```{r, partial.specimens}
+
+partial.specimens <- quality.chcks %>%
+  group_by(keys) %>%
+  # Find entries where the max specimen number is less 
+  # than the number of sampled individuals
+  filter(max(specimen_number) < subsample_count)
+
+dim(partial.specimens)
+# [1] 0 28
+
+```
+
+#### Check if there are excess specimens
+
+```{r, extra.specimens}
+
+#--------------------------------------------
+# Find how many entries exceed the sample 
+# count
+#--------------------------------------------
+extra.specimens <- quality.chcks %>%
+  group_by(keys) %>%
+  # Find entries where the max specimen number is more 
+  # than the number of sampled individuals
+  filter(max(specimen_number) > subsample_count)
+
+dim(extra.specimens)
+# [1] 4794  28
+# View(extra.specimens)
+
+length(unique(extra.specimens$keys))
+
+fwrite(extra.specimens, here(dir, "Data", survey.path,
+                  "ATM.Survey.extra.sample.observation.csv"),
+       sep = ",")
+
+# For the historic paper
+historic.extra.specimens <- extra.specimens %>%
+  filter(cruise > 200804 & cruise < 202103) %>%
+  filter(!cruise %in% c(200904, 201004, 201104, 201204, 201304, 201404, 
+                        201504, 201604, 201704))
+length(unique(historic.extra.specimens$keys))
+# [1] 7
+
+#--------------------------------------------
+# Recalculate the quality indices after 
+# filtering out extra samples and see if that helps
+#--------------------------------------------
+extra.specimens.resolved <- 
+  extra.specimens %>%
+  group_by(keys) %>%
+  # Remove individuals exceeding the total sample count
+  filter(specimen_number <= subsample_count) %>% 
+  mutate(quality.indic2 = 
+           round(sum(weight)-subsample_weight, 3)) %>%
+  ungroup() %>%
+  distinct()
+
+#--------------------------------------------
+# Save entries where this fixed the problem
+#--------------------------------------------
+extra.specimens.resolved.ok <- 
+  extra.specimens.resolved %>% 
+  filter(quality.indic2 == 0)
+
+dim(extra.specimens.resolved.ok)
+# [1] 3481   29
+
+#--------------------------------------------
+# Isolate cases, where this did not solve the 
+# problem
+#--------------------------------------------
+extra.specimens.cont. <- 
+  extra.specimens.resolved %>% 
+  filter(quality.indic2 != 0)
+
+dim(extra.specimens.cont.)
+# [1] 432  29
+
+length(unique(extra.specimens.cont.$keys))
+# [1] 10
+
+# What is the range we are now working with
+range(extra.specimens.cont.$quality.indic2)
+# [1] -6.937  2.359
+
+# What keys are represented?
+unique(extra.specimens.cont.$keys)
+#  [1] "200307_FR_32_2034_161729_2003-07-20 06:50:00_44.1466_-124.4486_44.1106_-124.4436"
+#  [2] "200403_FR_55_2105_161729_2004-03-17 12:37:00_46.101_-124.3756_46.1331_-124.3803" 
+#  [3] "200404_FR_21_2131_161729_2004-04-27 11:53:00_35.8958_-123.9646_35.8245_-123.9296"
+#  [4] "200407_FR_29_2164_161729_2004-07-16 09:18:00_44.0006_-124.5733_43.9993_-124.6311"
+#  [5] "200407_FR_53_2188_161729_2004-07-23 07:35:00_42.5798_-125.345_42.5333_-125.3365" 
+#  [6] "200503_FR_4_2197_161729_2005-03-04 07:00:00_47.9985_-126.5163_48.006_-126.5593"  
+#  [7] "200503_FR_36_2229_161729_2005-03-15 06:00:00_43.0006_-124.8486_42.9715_-124.8605"
+#  [8] "200504_JD_10_2252_161729_2005-04-06 05:21:00_34.5295_-121.0698_34.5015_-121.049" 
+#  [9] "200706_MF_4_2289_161729_2007-06-07 09:43:00_46.0288_-125.3115_46.0525_-125.3373" 
+# [10] "200407_FR_26_2161_161729_2004-07-15 12:32:00_45.0096_-124.34_44.9621_-124.3388"
+
+# Check that there are no keys shared between the two sets
+keys.check.extra.specimens.cont. <-
+  extra.specimens.cont. %>%
+  filter(keys %in% extra.specimens.resolved.ok$keys)
+
+length(unique(keys.check.extra.specimens.cont.$keys))
+# [1] 0
+
+# For the historic paper
+historic.extra.specimens.cont. <- extra.specimens.cont. %>%
+  filter(cruise > 200804 & cruise < 202103) %>%
+  filter(!cruise %in% c(200904, 201004, 201104, 201204, 201304, 201404, 
+                        201504, 201604, 201704))
+length(unique(historic.extra.specimens.cont.$keys))
+# [1] 0
+
+#--------------------------------------------
+# So there are no shared keys between the two
+# sets of data.
+#--------------------------------------------
+# Check if there is both random and 
+# non-random samples
+both.samp.types.extra.specimens.cont. <-
+  extra.specimens.cont. %>%
+  group_by(keys) %>%
+  mutate(SampTypesOK =
+          n_distinct(is_random_sample) == 2) %>%
+  ungroup() %>%
+  filter(SampTypesOK == TRUE)
+
+dim(both.samp.types.extra.specimens.cont.) 
+# [1] 0  30
+# So there are no case where both random and 
+# non-random samples exist
+
+#--------------------------------------------
+# There is an obvious weight error in 
+# keys "200407_FR_26_2161_161729_2004-07-15 12:32:00_45.0096_-124.34_44.9621_-124.3388".
+# In this haul, weight was already in kg so change
+# it back.
+extra.specimens.cont.fix <- extra.specimens.cont. %>%
+  filter(keys == "200407_FR_26_2161_161729_2004-07-15 12:32:00_45.0096_-124.34_44.9621_-124.3388") %>%
+  mutate(weight = weight*1000) %>%
+  # Recalculate quality indices
+  mutate(quality.indic2 = round(sum(weight)-subsample_weight,3))
+
+head(extra.specimens.cont.fix)
+
+#--------------------------------------------
+# Add this haul back to the data
+#--------------------------------------------
+extra.specimens.cont.pt2 <- 
+  extra.specimens.cont. %>%
+  filter(keys != "200407_FR_26_2161_161729_2004-07-15 12:32:00_45.0096_-124.34_44.9621_-124.3388") %>%
+  rbind(.,extra.specimens.cont.fix)
+
+range(extra.specimens.cont.pt2$quality.indic2)
+# [1] -2.807  2.359
+
+#--------------------------------------------
+# For remaining entries, redistribute weight
+#--------------------------------------------
+extra.specimens.cont.resolved <- 
+  extra.specimens.cont.pt2 %>% 
+  group_by(keys) %>%
+  mutate(prop.len.wgt = weight/sum(weight)) %>%
+  mutate(new.wgt = subsample_weight*prop.len.wgt) %>%
+  mutate(quality.indic3 = round(sum(new.wgt)-subsample_weight,3))
+
+unique(extra.specimens.cont.resolved$quality.indic3)
+# [1] 0
+dim(extra.specimens.cont.resolved)
+# [1] 432   32
+
+```
+
+#### Check for unresolved issues
+
+```{r, unresolved.issues.test}
+
+Haul.weights.sar.remaining.2.test <- 
+  quality.chcks %>%
+  filter(!keys %in% 
+           c(extra.specimens.resolved.ok$keys,
+             extra.specimens.cont.resolved$keys) &
+           quality.indic != 0)
+
+dim(Haul.weights.sar.remaining.2.test)
+# [1] 508  28
+range(Haul.weights.sar.remaining.2.test$quality.indic)
+# [1] -0.100  0.037
+# It looks like it is just a scale
+# precision difference 
+
+# For the historic paper
+historic.Haul.weights.sar.remaining.2.test <- Haul.weights.sar.remaining.2.test %>%
+  filter(cruise > 200804 & cruise < 202103) %>%
+  filter(!cruise %in% c(200904, 201004, 201104, 201204, 201304, 201404, 
+                        201504, 201604, 201704))
+length(unique(historic.Haul.weights.sar.remaining.2.test$keys))
+# [1] 3
+dim(historic.Haul.weights.sar.remaining.2.test)
+# [1] 150  28
+
+#-------------------------------------
+# Redistribute based on weight
+#-------------------------------------
+Haul.weights.sar.remaining.2.test.resolved <- 
+  Haul.weights.sar.remaining.2.test %>%
+  group_by(keys, collection, equilibrium_time.utc) %>%
+  mutate(prop.len.wgt = weight/sum(weight)) %>%
+  mutate(new.wgt = subsample_weight*prop.len.wgt) %>%
+  mutate(quality.indic4 = round(sum(new.wgt)-subsample_weight,3)) 
+
+unique(Haul.weights.sar.remaining.2.test.resolved$keys)
+# [1] "200307_FR_9_2011_161729_2003-07-10 07:36:00_43.983_-125.0215_44.0095_-124.9588"  
+#  [2] "200404_FR_1_2111_161729_2004-04-22 09:09:00_37.27_-124.3275_37.24_-124.3165"     
+#  [3] "200404_FR_9_2119_161729_2004-04-24 08:25:00_36.674_-123.8553_36.6438_-123.8516"  
+#  [4] "200404_FR_12_2122_161729_2004-04-25 09:30:00_35.4381_-123.1306_35.4216_-123.063" 
+#  [5] "200404_FR_13_2123_161729_2004-04-25 11:30:00_35.384_-123.1398_35.3593_-123.0696" 
+#  [6] "200404_FR_15_2125_161729_2004-04-26 07:11:00_34.927_-122.7336_34.8731_-122.7291" 
+#  [7] "200404_FR_20_2130_161729_2004-04-27 09:24:00_35.9343_-123.7571_35.9876_-123.7971"
+#  [8] "200407_FR_15_2150_161729_2004-07-12 06:00:00_46.3408_-124.3341_46.3041_-124.345" 
+#  [9] "200503_FR_15_2208_161729_2005-03-08 07:18:00_46.0011_-125.1733_45.9823_-125.203" 
+# [10] "200807_JD_1_2413_161729_2008-07-05 06:32:00_44.9698_-124.3143_45.0033_-124.3233" 
+# [11] "200807_JD_9_2421_161729_2008-07-09 05:17:00_47.1746_-124.5015_47.139_-124.4896"  
+# [12] "200904_FR_27_2509_161729_2009-04-24 10:14:00_32.8336_-123.0088_32.8615_-123.03"  
+# [13] "201907_RL_37_4137_161729_2019-06-30 05:55:00_45.6795_-123.9993_45.6302_-124.0018"
+dim(Haul.weights.sar.remaining.2.test.resolved)
+# [1] 508  31
+range(Haul.weights.sar.remaining.2.test.resolved$quality.indic4)
+# [1] 0 0
+
+# Replace original values
+Haul.weights.sar.remaining.2.test.resolved <-
+  Haul.weights.sar.remaining.2.test.resolved %>%
+  select(-weight) %>%
+  rename(weight = new.wgt)
+
+```
+
+# Clean and the remaining data
+
+```{r, other.species.prep}
+
+# For Other species
+Haul.weights.oth <- CatchWeightLengthPerHaul %>%
+  # All but sardine
+  filter(scientific_name != "Sardinops sagax") %>% 
+  # Group by transect
+  group_by(keys) %>% 
+  mutate(#Simplify the names for uninterested species
+         scientific_name = "Other",
+         is_random_sample = NA,
+         # Set to zero because we only want this as a place holder
+         Species_weight = 0, 
+         # Set to zero because we only want this as a place holder
+         weight = 0,
+         # Set to zero because we only want this as a place holder
+         subsample_weight = 0,
+         # Set to zero because we only want this as a place holder
+         specimen_number = NA,
+         # Set to zero because we only want this as a place holder
+         subsample_count = 0,
+         standard_length = NA) %>% 
+  ungroup() %>%
+  distinct()
+
+dim(Haul.weights.oth)
+# [1] 3508   26
+
+```
+
+# Join data sets
+
+```{r, joindata}
+
+#-------------------------------------
+# For Sardines where things worked
+## Note the observations with missing 
+## lengths are removed.
+#-------------------------------------
+Haul.weights.sar.clean2.fin <- 
+  Haul.weights.sar.clean2 %>% 
+  filter(quality.indic == 0) %>%
+  select(-c(FID, quality.indic))
+
+#-------------------------------------
+# For instances where removing the 
+# surplus of sardine samples not 
+# accounted for in the subsample weight
+#-------------------------------------
+extra.specimens.resolved.ok.fin <- 
+  extra.specimens.resolved.ok %>%
+  select(-c(FID, quality.indic2, 
+            quality.indic))
+
+#-------------------------------------
+# For instances where removing the 
+# surplus of sardine samples not 
+# accounted for in the subsample weight
+# and for correcting unit weights before
+# redistribution weights within the haul
+#-------------------------------------
+extra.specimens.cont.resolved.fin <- 
+  extra.specimens.cont.resolved %>%
+  select(-c(FID, quality.indic2, 
+            quality.indic3, 
+            new.wgt, prop.len.wgt, 
+            quality.indic))
+
+#-------------------------------------
+# For instances where there was no issue
+# issue in number of samples, but there
+# was a slight difference between the 
+# total subsample weight and sum of 
+# individual specimen weights
+#-------------------------------------
+Haul.weights.sar.remaining.2.test.resolved.fin <-
+  Haul.weights.sar.remaining.2.test.resolved %>%
+  select(-c(FID, quality.indic4, prop.len.wgt, 
+            quality.indic))
+
+
+US.specimen.dat.clean <-
+  rbind(
+    Haul.weights.sar.clean2.fin,
+    extra.specimens.resolved.ok.fin,
+    extra.specimens.cont.resolved.fin,
+    Haul.weights.sar.remaining.2.test.resolved.fin,
+    Haul.weights.oth)
+
+dim(US.specimen.dat.clean)
+# [1] 21105  26
+
+fwrite(US.specimen.dat.clean, 
+       here(dir, "Data", survey.path,
+            "2003.2024.ATM.Survey.with.specimen.data.csv"), 
+       sep = ",")
+
+```
