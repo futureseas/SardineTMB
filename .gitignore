@@ -28,6 +28,7 @@ Data/ROMS2/
 # Code outputs
 #--------------------------------------
 Final.Figures/
+Data/Shapefiles/
 *.jpg
 *.rds
 *.png
