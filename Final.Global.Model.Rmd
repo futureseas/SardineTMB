@@ -1,0 +1,505 @@
+---
+title: "Integrated.Canadian.dat.no.interpolation.fixed.years.drop.pre2008.and.2009-2011.model"
+author: "Stephanie Hopkins"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE
+    
+---
+
+```{r setup, include=FALSE}
+
+#-----------------------------------------------------------------
+# Run first if not already installed
+#-----------------------------------------------------------------
+
+#install.packages('remotes')
+#remotes::install_github("pbs-assess/sdmTMBextra", dependencies = TRUE)
+#remotes::install_github("pbs-assess/sdmTMB", dependencies = TRUE)
+
+#-----------------------------------------------------------------
+# If sdmTMBextra fails because of INLA install, use the following:
+#-----------------------------------------------------------------
+
+#remotes::install_version("INLA", version = "25.06.13",
+#repos = c(getOption("repos"), INLA = "https://inla.r-inla-download.org/R/testing"), dep = TRUE) 
+
+#-----------------------------------------------------------------
+# Begin setup
+#-----------------------------------------------------------------
+
+rm(list=ls())
+gc()
+
+load.lib <- c("tidyverse", "data.table", "cowplot", "sf", 
+              "here", "sdmTMB", 
+              "future.apply" # required for running sdmTMB::sdmTMB_cv
+              ) 
+
+install.lib <- load.lib[!load.lib %in% installed.packages()]
+
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+
+sf_use_s2(TRUE)
+
+dir <- here(getwd())
+
+source(here(dir, "functions.R"))
+
+```
+
+# Load and plot barrier mesh
+
+```{r, barrier.mesh}
+
+# High res coastal boundary from NOAA
+land.barrier <- read_sf(here(dir, "Data", "Shapefiles", "land.barrier.shp"))
+
+barrier2mld_42.5 <- readRDS(
+  file = here(dir, "Final.Results",
+              "barrier2mld_42.5.rds"))
+
+## If greater than >1,000–2,000 nodes, 
+## you’re likely in trouble unless you have a lot of RAM.
+length(barrier2mld_42.5$mesh$loc[,1])
+# [1] 176
+
+# Example plot code from ?add_barrier_mesh
+mesh_df_water_mld_42.5 <- 
+  barrier2mld_42.5$mesh_sf[barrier2mld_42.5$normal_triangles, ]
+mesh_df_land_mld_42.5 <- 
+  barrier2mld_42.5$mesh_sf[barrier2mld_42.5$barrier_triangles, ]
+
+Mesh.with.barrier_mld_42.5 <-
+ggplot() +
+  geom_sf(data = land.barrier) +
+  geom_sf(data = mesh_df_water_mld_42.5, size = 1, colour = "blue") +
+  geom_sf(data = mesh_df_land_mld_42.5, size = 1, colour = "green")
+
+Mesh.with.barrier_mld_42.5
+```
+
+# Load and plot stratified data
+
+```{r, stratified.data}
+
+# Load your fixed global dataset
+Season.2.dat.w.folds <- readRDS(here(dir, "Season.2.dat.w.folds.rds"))
+
+dim(Season.2.dat.w.folds)
+# [1] 2843   20
+
+unique(Season.2.dat.w.folds$.folds)
+# [1] 2 3 1 5 4
+# Levels: 1 2 3 4 5
+
+sampFolds <- Season.2.dat.w.folds %>% group_by(.folds) %>% summarise(n = n()) 
+sampFolds
+# .folds<fctr>  n<int>
+#            1	   566			
+#            2	   570			
+#            3	   566			
+#            4	   570			
+#            5	   571	
+
+Zeros <- Season.2.dat.w.folds %>%
+  filter(Total_W == 0)
+
+propZeros <- nrow(Zeros)/nrow(Season.2.dat.w.folds)
+propZeros
+# [1] 0.8617657
+
+```
+
+# Explore best model
+
+```{r, best.global.model}
+
+# Fit model
+deltalognormal.loglink.reml <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(YearSeas),
+  data = Season.2.dat.w.folds, 
+  family = delta_lognormal(type = "standard") , 
+  mesh = barrier2mld_42.5,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = ".folds",
+  silent = TRUE
+)
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 3) # Keep workers low to avoid RAM crash
+
+# Cross Validate
+cv_deltalognormal.loglink.reml <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(YearSeas),
+  data = Season.2.dat.w.folds, 
+  family = delta_lognormal(type = "standard") , 
+  mesh = barrier2mld_42.5,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = ".folds",
+  silent = TRUE
+)
+
+```
+
+### Create model decision table for two length bin model with 200 cut off
+
+```{r, 200plusLenBinModelDecision, message = FALSE, warning = FALSE, results = "hide"}
+
+# ====================================================================
+# 1. Define Helper Function
+# ====================================================================
+
+get_metrics <- function(objs, nm) {
+  suite_nm <- if(!is.null(objs$suite)) objs$suite else "Unassigned"
+  
+  if (is.null(objs$main) || is.null(objs$cv)) {
+    return(tibble(
+      Suite = suite_nm, Model = nm, `Total ELPD` = NA, 
+      `Main Sanity` = "Fit Error", `CV Sanity` = "Fit Error", `Folds Passed` = "0/5"
+    ))
+  }
+  
+  res <- try({
+    pointwise <- objs$cv$data$cv_loglik
+    folds <- objs$cv$fold_loglik
+    n_obs <- length(pointwise)
+    k_folds <- length(folds)
+    
+    pw_sd <- sd(pointwise, na.rm = TRUE)
+    pw_se <- sqrt(n_obs * var(pointwise, na.rm = TRUE))
+    fw_sd <- sd(folds, na.rm = TRUE)
+    fw_se <- sqrt(k_folds * var(folds, na.rm = TRUE))
+    
+    main_s <- all(unlist(sdmTMB::sanity(objs$main)))
+    fold_checks <- map_lgl(objs$cv$models, ~ all(unlist(sdmTMB::sanity(.x))))
+    
+    tibble(
+      Suite = suite_nm,
+      Model = nm,
+      `Total ELPD` = objs$cv$sum_loglik,
+      `PW SD` = round(pw_sd, 3), `PW SE` = round(pw_se, 2),
+      `FW SD` = round(fw_sd, 2), `FW SE` = round(fw_se, 2),
+      `Main Sanity` = if(main_s) "Pass" else "Fail",
+      `CV Sanity` = if(all(fold_checks)) "OK" else "! Warning",
+      `Folds Passed` = paste0(sum(fold_checks), "/", k_folds)
+    )
+  }, silent = TRUE)
+  
+  if (inherits(res, "try-error")) {
+    return(tibble(Suite = suite_nm, Model = nm, `Main Sanity` = "Extract Error"))
+  }
+  return(res)
+}
+
+# ====================================================================
+# 2. Run the Loop to Collect Data
+# ====================================================================
+
+all_results <- list(
+  "Delta lognormal (w REML): Log-link + log(Sweep_Volume) offset" = 
+  list(
+    main = deltalognormal.loglink.reml, 
+    cv = cv_deltalognormal.loglink.reml,
+    suite = "Best model"
+    )
+)
+
+# Step A: Combine raw metrics into one dataframe
+summary_df <- imap_dfr(all_results, ~get_metrics(.x, .y))
+
+# ====================================================================
+# 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
+# ====================================================================
+
+model_decision_table <- summary_df %>%
+  # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
+  select(
+    Suite, Model, 
+    `Main Sanity`, `CV Sanity`, `Folds Passed`, 
+    `Total ELPD`, 
+    everything() 
+    ) %>%
+  
+  # Calculate relative DELTA ELPD grouped by Suite
+  group_by(Suite) %>%
+  mutate(
+    # Condition: Row must pass both sanity tests and have valid ELPD data
+    is_valid_baseline = `Main Sanity` == "Pass" & `CV Sanity` == "OK" & 
+      !is.na(`Total ELPD`),
+    
+    # FIX: Target the HIGHEST (most positive/best fit) ELPD among passing models
+    baseline_elpd = if(any(is_valid_baseline)) {
+      max(`Total ELPD`[is_valid_baseline], na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+    
+    # Compute Delta (The top model outputs 0, inferior models output negative values)
+    `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
+    ) %>%
+  ungroup() %>%
+  
+  # Drop calculation columns and position DELTA ELPD next to Total ELPD
+  select(-is_valid_baseline, -baseline_elpd) %>%
+  relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+  
+  # Sorting: Sort by Suite, then arrange by Delta descending 
+  # This places your 0-valued best model at the top of each suite.
+  arrange(Suite, desc(`DELTA ELPD`))
+
+# Print final corrected table
+print(model_decision_table)
+
+```
+
+## Use DHARMa to test goodness of fit on best model
+
+accounted for spatial correlation.
+2) Check if delta/hurdle models in sdmTMB are properly handling zero-inflation.
+3) Visualize if a more complex model (*e.g.*, adding AR1 spatiotemporal fields) significantly improves the residuals compared to a simpler model. 
+
+```{r, DHARMa.check_42.5}
+
+set.seed(27)
+# 2. Generate simulation-based residuals (recommended approach)
+sim_42.5 <- simulate(deltalognormal.loglink.reml, nsim = 500, type = "mle-mvn")
+r_fit_42.5 <- dharma_residuals(sim_42.5, deltalognormal.loglink.reml, return_DHARMa = TRUE)
+
+# 3. Use DHARMa functions to plot and test
+plot(r_fit_42.5)
+
+DHARMa::testResiduals(r_fit_42.5)
+# $uniformity
+### Asymptotic one-sample Kolmogorov-Smirnov test
+##  data:  simulationOutput$scaledResiduals
+##  D = 0.028363, p-value = 0.02063
+##  alternative hypothesis: two-sided
+# $dispersion
+### DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
+##  data:  simulationOutput
+##  dispersion = 0.016526, p-value = 0.004
+##  alternative hypothesis: two.sided
+# $outliers
+###	DHARMa outlier test based on exact binomial test with approximate expectations
+##  data:  simulationOutput
+##  outliers at both margin(s) =  9, observations = 2843, p-value = 0.6533
+# alternative hypothesis: true probability of success is not equal to 0.003992016
+# 95 percent confidence interval:
+# 0.001448536 0.006000885
+# sample estimates:
+# frequency of outliers (expected: 0.00399201596806387 ) 
+#                                             0.00316567 
+
+Season.2.dat.w.folds$resids_42.5 <- r_fit_42.5$scaledResiduals # from dharma_residuals
+ggplot(Season.2.dat.w.folds, aes(X, Y, color = resids_42.5)) + 
+  geom_point() + 
+    scale_colour_gradient2(low = "blue", mid = "grey", high = "red",
+                           midpoint = 0.5)
+
+DHARMa::testZeroInflation(r_fit_42.5)
+# DHARMa zero-inflation test via comparison to expected zeros with simulation
+### under H0 = fitted model
+##  data:  simulationOutput
+##  ratioObsSim = 1.0238, p-value < 2.2e-16
+##  alternative hypothesis: two.sided
+
+# Test spatial autocorrelation 
+## 1. Recalculate to group by location
+r_aggr_42.5 <- DHARMa::recalculateResiduals(r_fit_42.5, 
+                                            group = interaction(Season.2.dat.w.folds$X,
+                                                                Season.2.dat.w.folds$Y))
+## 2. Get the unique coordinates that match the aggregated residuals
+coords_unique <- Season.2.dat.w.folds %>%
+  group_by(X, Y) %>%
+  summarize(.groups = "drop")
+## 3. Run the test
+DHARMa::testSpatialAutocorrelation(r_aggr_42.5, 
+                                   x = coords_unique$X, 
+                                   y = coords_unique$Y)
+### DHARMa Moran's I test for distance-based autocorrelation
+##  data:  r_aggr
+##  observed = -0.00442474, expected = -0.00066622, sd = 0.00382220, p-value = 0.3254
+##  alternative hypothesis: Distance-based autocorrelation
+
+```
+
+# For summary check
+
+Note for the deviance calculation, you cannot use reml. REML was chosen given it improved performance with ELPD and point-wise and fold-wise error and standard deviation. 
+
+The calculated ELPD SE, ELPD SD, and sdmTMB::deviations differ in what they measure: ELPD SE is the standard error of the estimated difference in predictive accuracy between models, ELPD SD (often ELPD itself) is the total predictive density, while sdmTMB::deviations (or residuals) are the difference between observed data and model predictions (e.g., Pearson, response).
+
+## For 42.5 km node distance mesh
+
+Null Model (M0): Total_W ~ 1 (No random effects, no fixed effects).
+
+```{r, null.deviance42.5km}
+
+# 0. Null Model
+# Absolute Null: Baseline variance of the data
+m0_42.5 <- sdmTMB(
+  Total_W ~ 1,
+  data = Season.2.dat.w.folds, 
+  family = delta_lognormal(type = "standard"), 
+  mesh = barrier2mld_42.5,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = NULL,    
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "off",
+  spatial = "off",
+  spatial_varying = NULL,
+  reml = FALSE,
+  anisotropy = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_idx",
+  silent = TRUE
+)
+
+sanity(m0_42.5)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed Effects Only (M1): Total_W ~ YearSeas.nm (No spatial/spatiotemporal engines).
+
+```{r, deviance.explained.by.fixed.effects42.5km}
+
+# 1. FIXED EFFECTS ALONE
+# (YearSeas + merged_bin)
+m1_fixed_42.5 <- update(m0_42.5, 
+                   formula = Total_W ~ as.factor(YearSeas.nm),
+                   #time = NULL,    
+                   # Use "ar1" or "rw" if you expect temporal autocorrelation
+                   # Otherwise, use default "iid" (independent by time step)
+                   #spatiotemporal = "off",
+                   reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m1_fixed_42.5)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed + Spatially Varying (M2): Add spatial_varying = ~ merged_bin.
+
+```{r, deviance.explained.by.fixed.plus.spatial.varying.effects42.5km}
+
+# 2. SPATIALLY VARYING COMPONENT ALONE 
+# (This adds the 'spatial_varying' engine to the fixed effects)
+m2_sv_42.5 <- update(m1_fixed_42.5, 
+                formula = Total_W ~ as.factor(YearSeas.nm),
+                time = NULL,   
+                # Use "ar1" or "rw" if you expect temporal autocorrelation
+                # Otherwise, use default "iid" (independent by time step)
+                spatiotemporal = "off",
+                spatial = "on",
+                reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m2_sv_42.5)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+The Full Model (M3): Add spatiotemporal = "iid".
+
+```{r, deviance.explained.by.fixed.plus.spatial.varying.plus.spatiotemporal.effects42.5km}
+
+# 3. SPATIOTEMPORAL COMPONENT ALONE
+# (The full model including random ST fields)
+m3_full_42.5 <- update(m2_sv_42.5,
+                  formula = Total_W ~ as.factor(YearSeas.nm),
+                  time = "YearSeas.nm",               
+                  spatiotemporal = "iid", 
+                  reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m3_full_42.5)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+--- THE MATH ---
+
+```{r, deviance.explained.by.component42.5km}
+
+d0_42.5 <- deviance(m0_42.5)
+d1_42.5 <- deviance(m1_fixed_42.5)
+d2_42.5 <- deviance(m2_sv_42.5)
+d3_42.5 <- deviance(m3_full_42.5)
+
+# Percentages of total deviance explained by each:
+pct_full_model_42.5 <- 1 - d3_42.5 / d0_42.5
+pct_fixed_only_42.5 <- (d0_42.5 - d1_42.5) / d0_42.5
+pct_sv_only_42.5    <- (d1_42.5 - d2_42.5) / d0_42.5
+pct_st_only_42.5    <- (d2_42.5 - d3_42.5) / d0_42.5
+
+pct_full_model_42.5*100
+# [1] 48.72551
+
+pct_fixed_only_42.5*100
+# [1] 13.23838
+
+pct_sv_only_42.5*100
+# [1] 16.86159
+
+pct_st_only_42.5*100
+# [1] 18.62554
+
+```
+

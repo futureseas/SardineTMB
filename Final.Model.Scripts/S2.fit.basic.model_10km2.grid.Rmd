@@ -1,0 +1,3312 @@
+---
+title: "Integrated Canadian Abundance Indices and Selected Model Exploration"
+author: "Stephanie Hopkins"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE
+    
+---
+
+```{r setup, include=FALSE}
+
+#-----------------------------------------------------------------
+# Run first if not already installed
+#-----------------------------------------------------------------
+
+#remotes::install_github("pbs-assess/sdmTMBextra", dependencies = TRUE)
+#remotes::install_github("pbs-assess/sdmTMB", dependencies = TRUE)
+
+#-----------------------------------------------------------------
+# If sdmTMBextra fails because of INLA install, use the following:
+#-----------------------------------------------------------------
+
+#remotes::install_version("INLA", version = "25.06.13",
+#repos = c(getOption("repos"), INLA = "https://inla.r-inla-download.org/R/testing"), dep = TRUE) 
+
+#-----------------------------------------------------------------
+# Begin setup
+#-----------------------------------------------------------------
+
+rm(list=ls())
+gc()
+
+load.lib <- c("tidyverse", "data.table", "cowplot", "sf", 
+              "here", "sdmTMB", "sdmTMBextra", 
+              "cubelyr", # For filtering stars obj. 
+              "rnaturalearth", "rnaturalearthhires", "stars", 
+              "terra", # For rasterize function to speed up land and grid intersection
+              "readODS", # Loads the table made externally from Libre Office)
+              "mregions2", # Pulls official maritime EEZ records from MarineRegions.org
+              "patchwork", # For making clean panel figures
+              "ncdf4", 
+              "future.apply",
+              "exactextractr",
+              "parallel")
+
+install.lib <- load.lib[!load.lib %in% installed.packages()]
+
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+
+sf_use_s2(FALSE)
+
+# To Change!
+#dir <- "C:/Users/shopkin1/Documents/Sardine_SptlOM"
+dir <- "C:/Users/steph/Documents/Sardine_SptlOM"
+
+source(here("functions.R"))
+
+# Specify the path for the directory you want to create for figures
+new_directory_path <- here("Final.Figures",
+                            "S2.fit.basic.model_10km2.grid")
+
+# Check if the directory exists
+if (!dir.exists(new_directory_path)) {
+  # If it doesn't exist, create it
+  dir.create(new_directory_path)   
+  print(paste("Directory '", new_directory_path, "' created successfully.", 
+              sep = ""))
+  } else {
+    print(paste("Directory '", new_directory_path, "' already exists.", 
+                sep = ""))
+    }
+
+# Specify the path for the directory you want to create for results 
+new_directory_path2 <- here("Final.Results",
+                            "S2.fit.basic.model_10km2.grid")
+
+# Check if the directory exists
+if (!dir.exists(new_directory_path2)) {
+  # If it doesn't exist, create it
+  dir.create(new_directory_path2)   
+  print(paste("Directory '", new_directory_path2, "' created successfully.", 
+              sep = ""))
+  } else {
+    print(paste("Directory '", new_directory_path2, "' already exists.", 
+                sep = ""))
+  }
+
+```
+
+# Load best model, missing years, and spatial definitions
+
+```{r, load.final.model.missing.years.and.spatial.defs}
+
+# Since the data falls within two UTM zones and there is not an ideal projection to use, apply a custom equal area Albers projection
+aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
+
+# High res coastal boundary from NOAA
+land.barrier <- read_sf(here("Data", "Shapefiles",
+                             "land.barrier.shp"))
+
+# Load YearSeason gaps to fill
+load(file = here("Data", "ExampleRun",
+                 "est.missing.time2.rda"))
+
+```
+
+# Load data
+
+```{r, auxillary.model.information}
+
+# Since the data falls within two UTM zones and there is not an ideal projection to use, apply a custom equal area Albers projection
+aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
+
+# High res coastal boundary from NOAA
+land.barrier <- read_sf(here("Data", "Shapefiles",
+                             "land.barrier.shp"))
+
+# Load YearSeason gaps to fill
+load(file = here("Data", "ExampleRun",
+                 "est.missing.time2.rda"))
+
+```
+
+# Create plot graticule labels
+
+Note this is only for graph labels and is chosen based on the mean lat and lon values of the haul transect locations.
+
+```{r, Create.plot.label.breaks}
+
+lat_breaks <- seq(27, 55, 4)  # Latitude breaks
+
+lat_labels <- c(paste(27, "\u00b0", "N", sep=""),
+                paste(31, "\u00b0", "N", sep=""),
+                paste(35, "\u00b0", "N", sep=""),
+                paste(39, "\u00b0", "N", sep=""),
+                paste(43, "\u00b0", "N", sep=""),
+                paste(47, "\u00b0", "N", sep=""),
+                paste(51, "\u00b0", "N", sep=""),
+                paste(55, "\u00b0", "N", sep=""))
+
+```
+
+# Create base map
+
+Note that cropping should be done before projecting the data and projecting the data should be done before any intersection analysis.
+
+```{r, basemap}
+
+#------------------------------------------------------------------------
+# Make coastline backdrop
+#------------------------------------------------------------------------
+
+PacificCoast <- ne_countries(scale = 10, returnclass = "sf") 
+PacificCoast.wgs84 <- st_crop(PacificCoast, xmin = -133, xmax = -110, 
+                               ymin = 25, ymax = 55)
+class(PacificCoast)
+
+#------------------------------------------------------------------------
+# Plot output
+#------------------------------------------------------------------------
+
+ggplot() +
+    geom_sf(data = PacificCoast.wgs84, fill = "#D2B48C", col = "#927143") +
+    xlab("Longitude") + ylab("Latitude") +
+    ggtitle("West Coast map") +
+    theme_classic()
+
+```
+
+## Apply min and max geographical extents
+
+```{r, adjust.map.dimensions}
+
+#------------------------------------------------------------------------
+# Find spatial extents
+#------------------------------------------------------------------------
+
+xmin <- st_bbox(PacificCoast.wgs84)["xmin"]
+xmin
+# [1] -133
+
+xmax <- st_bbox(PacificCoast.wgs84)["xmax"]
+xmax
+# [1] -110
+  
+#------------------------------------------------------------------------
+# Plot
+#------------------------------------------------------------------------
+
+PacificCoast.wgs84.map <-
+  ggplot() +
+  geom_sf(data = PacificCoast.wgs84,
+          color = "#ae8f60", 
+          size = 0.7, 
+          fill = "#E1C699") +
+  theme_void() +
+  scale_y_continuous(limits = c(27,55), 
+                     breaks = lat_breaks, 
+                     labels = lat_labels, 
+                     expand = c(0.05, 0.05)) +
+  labs(y = "Latitude")
+
+PacificCoast.wgs84.map
+
+#------------------------------------------------------------------------
+# Create a mapping boundary box
+#------------------------------------------------------------------------
+
+pacific_bbox <- st_bbox(PacificCoast.wgs84)
+#     xmin ymin xmax ymax
+# [1] -133   27 -111   55
+
+```
+
+## Create hline boundaries
+
+Because the current model looks at only the Northern sub population in US waters, one of the boundary extents should include the national boarders. The second should look at the coast of California where the most mixing is thought to occur for Pacific Sardine sub populations (under the current survey hypothesis). From the data we are looking at data from UTM zone 10 and UTM zone 11. However, using the USA Contiguous Albers Equal Area Conic project (ESRI:102003) skews Canadian and Mexican data extents. The therefore the use of aea_custom was chosen.
+
+```{r, find.original.model.break.dimensions}
+
+# First transform the data to be able to do intersection analysis
+PacificCoast.aea_custom <- st_transform(PacificCoast.wgs84, 
+                                        crs = aea_custom)
+
+#------------------------------------------------------------------------
+# In order to find the state boundary extents, use ne_states function in 
+# rnaturalearth
+#------------------------------------------------------------------------
+
+# Find state boundaries
+PCoastStates.wgs84 <- ne_states(returnclass = "sf")
+
+PCoastStates.aea_custom <-
+  # Convert to m for intersection
+  st_transform(PCoastStates.wgs84, crs = aea_custom) 
+
+PCoastStates.aea_custom <- 
+  st_intersection(PCoastStates.aea_custom, PacificCoast.aea_custom)
+
+#------------------------------------------------------------------------
+# In order to find the state boundary extents, use ne_states function in 
+# rnaturalearth
+#------------------------------------------------------------------------
+
+# Find state boundaries
+PCoastStates.wgs84 <- ne_states(returnclass = "sf")
+
+PCoastStates.aea_custom <-
+  # transform to NAD83 / Conus Albers
+  st_transform(PCoastStates.wgs84, crs = aea_custom) 
+
+PCoastStates.aea_custom <- st_intersection(PCoastStates.aea_custom,
+                                           PacificCoast.aea_custom)
+
+#------------------------------------------------------------------------
+# populated areas (cities and city names)
+#------------------------------------------------------------------------
+
+Populated10.wgs84 <- ne_download(scale = 110, 
+                                 type = "populated_places_simple", 
+                                 category = "cultural", 
+                                 returnclass = "sf") 
+
+Populated10.aea_custom <- Populated10.wgs84 %>%
+  st_transform(., crs = aea_custom)
+
+Populated10.aea_custom <- st_intersection(Populated10.aea_custom,
+                                          PCoastStates.aea_custom)
+
+#------------------------------------------------------------------------
+# For EEZ definitions 
+#------------------------------------------------------------------------
+# Note: Because you are cropping to study extent you need to put disclaimer!
+## Exclusive Economic Zone (EEZ) boundaries are filled by region and 
+## clipped to the study extent (27°N–55°N, 111°W–133°W) without explicit 
+## boundary lines for cartographic clarity. Displayed spatial extents are for 
+## analytical reference and do not imply official political endorsement or 
+## territorial adjudication.
+
+# For the U.S.
+# Download US EEZ polygons directly from MarineRegions.org
+us_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'United States' OR sovereign2 = 'United States'")
+us_eez <- us_eez_raw %>% 
+  # Crop the polygon to the Pacific region
+  st_crop(pacific_bbox) %>%
+  # Transform to your custom projection AFTER cropping
+  st_transform(crs = aea_custom) %>% 
+  # Clean up any geometry artifacts along the crop edge
+  st_make_valid()
+
+# For Canada
+canada_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'")
+canada_eez <- canada_eez_raw %>% 
+  # Crop the polygon to the Pacific region
+  st_crop(pacific_bbox) %>%
+  # Transform to your custom projection AFTER cropping
+  st_transform(crs = aea_custom) %>% 
+  # Clean up any geometry artifacts along the crop edge
+  st_make_valid()
+
+# For Overlapping claims
+contested_cad_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'") %>% 
+  filter(pol_type == "Overlapping claim") 
+dim(contested_cad_raw)
+# [1] 1 32
+
+# For Mexico
+mexico_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Mexico' OR sovereign2 = 'Mexico'")
+mexico_eez <- mexico_eez_raw %>% 
+  # Crop the polygon to the Pacific region
+  st_crop(pacific_bbox) %>%
+  # Transform to your custom projection AFTER cropping
+  st_transform(crs = aea_custom) %>% 
+  # Clean up any geometry artifacts along the crop edge
+  st_make_valid()
+
+#------------------------------
+# Check For Overlapping claims
+#------------------------------
+
+## For U.S.
+contested_us_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'United States' OR sovereign2 = 'United States'") %>% 
+  filter(pol_type == "Overlapping claim") %>% 
+  # Crop the polygon to the Pacific region
+  st_crop(pacific_bbox) 
+dim(contested_us_raw)
+# [1] 0 32
+
+## For Canada
+contested_cad_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'") %>% 
+  filter(pol_type == "Overlapping claim") %>% 
+  # Crop the polygon to the Pacific region
+  st_crop(pacific_bbox) 
+dim(contested_cad_raw)
+# [1] 0 32
+
+## For Mexico
+contested_mex_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Mexico' OR sovereign2 = 'Mexico'") %>% 
+  filter(pol_type == "Overlapping claim") %>% 
+  # Crop the polygon to the Pacific region
+  st_crop(pacific_bbox) 
+dim(contested_mex_raw)
+# [1] 0 32
+
+#------------------------------------------------------------------------
+# Put everything together for the polygons
+#------------------------------------------------------------------------
+
+# 1. Extract pure geometries
+geom_us     <- st_geometry(us_eez)
+geom_canada <- st_geometry(canada_eez)
+geom_mexico <- st_geometry(mexico_eez)
+
+# 2. Build individual sf objects
+us_clean     <- st_sf(Region = "Pacific U.S. EEZ", geometry = geom_us)
+canada_clean <- st_sf(Region = "Pacific Canadian EEZ", geometry = geom_canada)
+mexico_clean <- st_sf(Region = "Pacific Mexican EEZ", geometry = geom_mexico)
+
+# 3. Combine all active non-empty regions into one dataset
+eez_zones <- bind_rows(
+  us_clean, 
+  canada_clean, 
+  mexico_clean
+)
+
+# Plot using color fill based on Region
+plot(eez_zones["Region"])
+
+#------------------------------------------------------------------------
+# Create a transformed line for residual plots
+#------------------------------------------------------------------------
+
+# Create northern stock boundary (Westernmost Point, CA)
+nstock <- st_sf(
+  geometry = 
+    st_sfc(
+      st_linestring(matrix(c(-133, 40.4385, -111, 40.4385), 
+                           ncol = 2, byrow = TRUE))),
+  crs = 4326
+  ) %>%
+  st_transform(., crs = aea_custom)
+
+# Create southern stock boundary (Point Conception, CA)
+point.concept <- st_sf(
+  geometry = 
+    st_sfc(
+      st_linestring(matrix(c(-133, 34.4486, -111, 34.4486), 
+                           ncol = 2, byrow = TRUE))),
+  crs = 4326
+  ) %>%
+  st_transform(., crs = aea_custom)
+
+ggplot() +
+  geom_sf(data = nstock, col = "blue", 
+             linewidth = 0.7, linetype = "dashed") +
+  geom_sf(data = point.concept, col = "red", 
+             linewidth = 0.7, linetype = "longdash") +# 1. EEZ 4-Zone Layer
+  geom_sf(data = eez_zones,
+          color = NA,
+          alpha = 0.5,
+          aes(fill = Region)) +
+  
+  scale_fill_manual(
+    name = "EEZ Region",
+    values = c(
+      "Pacific Canadian EEZ"      = "lightblue",
+      "Pacific U.S. EEZ"          = "lightgreen",
+      "Pacific Mexican EEZ"       = "yellowgreen"
+    )
+  ) +
+  
+  # 2. Land Layers
+  geom_sf(data = PacificCoast.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = Populated10.aea_custom) +
+  geom_sf_text(data = Populated10.aea_custom,
+               aes(label = name), 
+               nudge_y = 50000,  # Offset text 40km north so it doesn't overlap the point
+               size = 3.5,
+               fontface = "bold"
+               ) +
+  # Remove added space on x-axis
+  scale_x_continuous(expand = c(0, 0))
+
+```
+
+# Load base model data (historic) and restructure
+
+```{r, load.final.model.and.cleaned.data}
+
+# Load grouped length data
+Summer.dat <- readRDS(here(dir, "Season.2.dat.w.folds.rds"))
+
+# Load global mesh
+barrier2mld_42.5 <- readRDS(
+  file = here(dir, "Final.Results",
+              "barrier2mld_42.5.rds"))
+
+# Re-run best model
+deltalognormal.loglink.reml <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(YearSeas),
+  data = Summer.dat, 
+  family = delta_lognormal(type = "standard") , 
+  mesh = barrier2mld_42.5,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = ".folds",
+  silent = TRUE
+)
+
+sanity(deltalognormal.loglink.reml)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+# ✔ Range parameters don't look unreasonably large
+
+# Clear un-used memory
+gc()
+
+```
+
+# Explore model outputs
+
+DHARMa is designed to check overall model assumptions for GLMMs, while mle-mvn specifically checks consistency with a multivariate normal distribution of observations. 
+
+If DHARMa looks great but mle-mvn looks terrible, it usually means your observation  model (the family and link function) is fine, but your random effects structure (spatial fields or intercepts) might be problematic.
+
+mle-mvn is simulation-based. If you run that exact line of code twice, you will get slightly different numbers both times. To make your plots reproducible, it is good practice to wrap it in a seed.
+
+```{r, Summer.stats.rw}
+
+#------------------------------------------------------------------------
+# Adjust scale and spatial defs for residual plots
+#------------------------------------------------------------------------
+
+Summer.dat.sf <- Summer.dat %>%
+  mutate(X_m = X*1000,
+         Y_m = Y*1000) %>%
+  st_as_sf(., coords = c("X_m","Y_m"), crs = aea_custom)
+          
+#------------------------------------------------------------------------
+# For Histogram of season 2: Model Component 1
+#------------------------------------------------------------------------
+
+# Extract residuals
+resid_data <- data.frame(residuals = 
+                           residuals(deltalognormal.loglink.reml, 
+                                     type = "mle-mvn", model = 1))
+
+# Plot
+residualHist.pt1 <-
+  ggplot(resid_data, aes(x = residuals)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
+  geom_vline(xintercept = 0, color = "red") +
+  labs(
+    title = "Histogram of residuals (Model Component 1)",
+    x = "Residuals",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# View output 
+residualHist.pt1
+
+# Save figure
+ggsave2(
+  filename="S2.base.model.residualHist.pt1.jpeg",
+        plot=residualHist.pt1, 
+  device = "jpeg", 
+  path = new_directory_path,
+  dpi = 1200, 
+  width = 45,      # Expanded width to accommodate two side-by-side multi-facet maps
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+)
+
+#------------------------------------------------------------------------
+# For Q-Q of season 2: Model Component 1
+#------------------------------------------------------------------------
+
+# Plot
+residualQ_Q.pt1 <-
+  ggplot(resid_data, aes(sample = residuals)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  labs(
+    title = "Q-Q plot of residuals (Model Component 1)",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  ) +
+  theme_minimal()
+
+# View output
+residualQ_Q.pt1
+
+# Save figure
+ggsave2(
+  filename="S2.base.model.residual.Q-Q.pt1.jpeg",
+        plot=residualQ_Q.pt1, 
+  device = "jpeg", 
+  path = new_directory_path,
+  dpi = 1200, 
+  width = 45,      # Expanded width to accommodate two side-by-side multi-facet maps
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+)
+
+#------------------------------------------------------------------------
+# For Residual Map of season 2: Model Component 1
+#------------------------------------------------------------------------
+
+Summer.dat.sf$resids1 <- 
+  residuals(deltalognormal.loglink.reml, type = "mle-mvn", model = 1)
+          
+Summer.residuals.m1 <-
+  ggplot() +
+  # 1. Add EEZ boundaries
+  geom_sf(data = eez_zones,
+          color = NA,
+          alpha = 0.5,
+          aes(fill = Region)) +
+  scale_fill_manual(
+    name = "EEZ Region",
+    values = c(
+      "Pacific Canadian EEZ"      = "lightblue",
+      "Pacific U.S. EEZ"          = "lightgreen",
+      "Pacific Mexican EEZ"       = "yellowgreen"
+    )
+  ) +
+  # 2. Land Layers
+  geom_sf(data = PacificCoast.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  # Residual points
+  geom_sf(data = Summer.dat.sf, aes(color = resids1)) +
+  scale_colour_gradient2(
+    name = "Residuals (mle-mvn)",
+    low = "blue", mid = "white", high = "red", midpoint = 0) +
+  # Spatial Bounding Box Control (Replaces scale_x_continuous)
+  coord_sf(expand = FALSE) +
+  facet_wrap(~Year, ncol = 5) + 
+  labs(y = "Latitude") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0, size = 7),
+        axis.text.y = element_text(size = 7),
+        panel.spacing = unit(2, "pt"),
+        plot.margin = margin(t = 0, r = 2, b = 0, l = 2, unit = "pt")
+  )
+
+
+Summer.residuals.m1
+
+ggsave2(filename="S2.DeltaLognormalFullModelMap.pt1.jpg",
+        plot=Summer.residuals.m1, 
+  device = "jpeg", 
+  path = new_directory_path,
+  dpi = 1200, 
+  width = 45,      # Expanded width to accommodate two side-by-side multi-facet maps
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+)
+
+#------------------------------------------------------------------------
+# For Histogram of season 2: Model Component 2
+#------------------------------------------------------------------------
+
+# Extract residuals
+resid_data2 <- data.frame(residuals = 
+                            residuals(deltalognormal.loglink.reml, 
+                                      type = "mle-mvn", model = 2))
+
+# Plot
+residualHist.pt2 <-
+  ggplot(resid_data2, aes(x = residuals)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
+  geom_vline(xintercept = 0, color = "red") +
+  labs(
+    title = "Histogram of residuals (Model Component 2)",
+    x = "Residuals",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# View output 
+residualHist.pt2
+
+# Save figure
+ggsave2(
+  filename="S2.base.model.residualHist.pt2.jpeg",
+        plot=residualHist.pt2, 
+  device = "jpeg", 
+  path = new_directory_path,
+  dpi = 1200, 
+  width = 45,      # Expanded width to accommodate two side-by-side multi-facet maps
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+)
+
+#------------------------------------------------------------------------
+# For Q-Q of season 2: Model Component 2
+#------------------------------------------------------------------------
+
+# Plot
+residualQ_Q.pt2 <-
+  ggplot(resid_data2, aes(sample = residuals)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  labs(
+    title = "Q-Q plot of residuals (Model Component 2)",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  ) +
+  theme_minimal()
+
+# View output
+residualQ_Q.pt2
+
+# Save figure
+ggsave2(
+  filename="S2.base.model.residual.Q-Q.pt2.jpeg",
+        plot=residualQ_Q.pt2, 
+  device = "jpeg", 
+  path = new_directory_path,
+  dpi = 1200, 
+  width = 45,      # Expanded width to accommodate two side-by-side multi-facet maps
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+)
+
+#------------------------------------------------------------------------
+# For Residual Map of season 2: Model Component 2
+#------------------------------------------------------------------------
+
+Summer.dat.sf$resids2 <- residuals(deltalognormal.loglink.reml, 
+                                     type = "mle-mvn", model = 2)
+
+positive_catches_sf <- Summer.dat.sf %>% 
+  filter(!is.na(resids2))
+
+Summer.residuals.m2<-
+   ggplot() +
+  # 1. Add EEZ boundaries
+  geom_sf(data = eez_zones,
+          color = NA,
+          alpha = 0.5,
+          aes(fill = Region)) +
+  scale_fill_manual(
+    name = "EEZ Region",
+    values = c(
+      "Pacific Canadian EEZ"      = "lightblue",
+      "Pacific U.S. EEZ"          = "lightgreen",
+      "Pacific Mexican EEZ"       = "yellowgreen"
+    )
+  ) +
+  # 2. Land Layers
+  geom_sf(data = PacificCoast.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  # Residual points
+  geom_sf(data = positive_catches_sf, aes(color = resids2)) +
+  scale_colour_gradient2(
+    name = "Residuals (mle-mvn) for postive catches",
+    low = "blue", mid = "white", high = "red", midpoint = 0) +
+  # Spatial Bounding Box Control (Replaces scale_x_continuous)
+  coord_sf(expand = FALSE) +
+  facet_wrap(~Year, ncol = 5) + 
+  labs(y = "Latitude") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0, size = 7),
+        axis.text.y = element_text(size = 7),
+        panel.spacing = unit(2, "pt"),
+        plot.margin = margin(t = 0, r = 2, b = 0, l = 2, unit = "pt")
+  )
+
+
+Summer.residuals.m2
+
+ggsave2(filename="S2.DeltaLognormalFullModelMap.pt2.jpeg",
+        plot=Summer.residuals.m2, 
+  device = "jpeg", 
+  path = new_directory_path,
+  dpi = 1200, 
+  width = 45,      # Expanded width to accommodate two side-by-side multi-facet maps
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+)
+
+```
+
+# Create a 10 km x 10 km grid
+
+```{r, create grid}
+
+# Expand bounding box by 50 m each side and convert to polygon in one step
+bbox <- st_bbox(Summer.dat.sf) + c(-50, -50, 50, 50)
+
+bbox_poly <- st_as_sfc(bbox, crs = st_crs(Summer.dat.sf))
+
+# Create grid
+grid <- st_make_grid(
+  bbox_poly,
+  # corresponds to a 10km x 10km grid
+  cellsize = c(10000, 10000),
+  what = "centers"
+) 
+
+# Save as sf object
+grid_vect <- vect(grid)
+
+# Convert to raster
+grid_rast <- rast(grid_vect, resolution = 10000)
+
+# Assign values to the grid cells
+values(grid_rast) <- 1:ncell(grid_rast) 
+
+```
+
+# Add columns used in models
+
+```{r, create grid}
+
+# Get the coordinates for each cell
+coords <- crds(grid_rast)
+
+# Combine into a data frame (remember to convert to km)
+data_with_coords <- data.frame(X = coords[, 1], Y = coords[, 2])
+
+ggplot() +
+  geom_raster(data = data_with_coords, aes(x=X, y=Y)) +
+  geom_sf(data = PacificCoast.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  theme_bw()
+  
+```
+  
+
+# Join ROMS data by spatial and temporal step
+
+```{r, structure.data}
+
+# -----------------------------------------------------------------------------
+# 1. Identify summer months (Ensuring CHARACTER format for raster matching)
+# -----------------------------------------------------------------------------
+
+# View(TwoLenBin200.dat)
+
+# Try parsing both position 3 AND position 6, taking whichever works
+Summer.dat_clean <- Summer.dat %>%
+  mutate(
+    str_pos3 = str_split_fixed(keys, pattern = "_", 7)[, 3],
+    str_pos6 = str_split_fixed(keys, pattern = "_", 7)[, 6],
+    date_pos3 = parse_date_time(str_pos3, orders = c("ymd HMS"), quiet = TRUE),
+    date_pos6 = parse_date_time(str_pos6, orders = c("ymd HMS"), quiet = TRUE),
+    # Coalesce picks the first non-NA value (tries pos6 first, falls back to pos3)
+    parsed_date = coalesce(date_pos6, date_pos3)
+  )
+# Extract your unique summer months as characters
+months.list <- as.character(unique(month(Summer.dat_clean$parsed_date[!is.na(Summer.dat_clean$parsed_date)])))
+print(months.list)
+
+# -----------------------------------------------------------------------------
+# 2. Convert unique grid centers to 10 km x 10 km polygons across all years
+# -----------------------------------------------------------------------------
+
+# Create sf object from spatial coordinates
+grid_sf_centers <- st_as_sf(data_with_coords, 
+                            coords = c("X", "Y"), 
+                            crs = aea_custom,
+                            remove = F) # Maintains centroid structure
+
+# Optional: Add an explicit unique cell ID for bulletproof tracking
+grid_sf_centers <- grid_sf_centers %>%
+  mutate(cell_id = row_number())
+
+# Replicate spatial points across years
+grid_sf_df <- sdmTMB::replicate_df(
+  grid_sf_centers, 
+  "Year", 
+  unique(Summer.dat$Year)
+)
+
+# Re-assign sf class lost during replication and create 10km x 10km square buffers
+grid_sf_polys <- grid_sf_df %>%
+  st_as_sf(crs = aea_custom) %>%
+  st_buffer(dist = 5000, endCapStyle = "SQUARE")
+ 
+ggplot() +
+  geom_sf(data = grid_sf_polys, col = "red", alpha = 0.5) +
+  geom_sf(data = PacificCoast.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  theme_bw()  
+
+ggplot() +
+  geom_raster(data = data_with_coords, aes(x=X, y=Y)) +
+  geom_sf(data = PacificCoast.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  theme_bw()
+
+# -----------------------------------------------------------------------------
+# 3. List ROMS NetCDF files
+# -----------------------------------------------------------------------------
+
+fls <- list.files(
+  here(dir, "Data", "ROMS2", "Regridded", "10x10km"), 
+  pattern = "^allvars_mld_hindcast_.*\\_mld_masked_regrid.nc$",
+  full.names = TRUE
+)
+
+# -----------------------------------------------------------------------------
+# 4. Extraction Function per Year
+# -----------------------------------------------------------------------------
+
+extract_summer_mld <- function(f, all_polys, target_months) { 
+  # Extract year from file name
+  file_year <- as.numeric(regmatches(basename(f), regexpr("[0-9]{4}", basename(f))))
+  
+  # Filter grid polygons for THIS specific year
+  year_polys <- all_polys %>% filter(Year == file_year)
+  if (nrow(year_polys) == 0) return(NULL)
+  
+  # Load ROMS raster
+  r <- terra::rast(f)
+  
+  # Sync names with month strings
+  r_times <- terra::time(r)
+  if (!all(is.na(r_times))) {
+    names(r) <- as.character(as.numeric(format(r_times, "%m")))
+  } else {
+    names(r) <- as.character(1:12)
+  }
+  
+  # Identify summer layers present (Character matching)
+  avail_summer <- intersect(months.list, names(r))
+  if (length(avail_summer) == 0) return(NULL)
+  
+  # Compute mean summer MLD layer
+  r_summer_mean <- mean(r[[avail_summer]], na.rm = TRUE)
+  
+  # Match CRS if needed
+  if (st_crs(r_summer_mean) != st_crs(year_polys)) {
+    r_summer_mean <- terra::project(r_summer_mean, crs(year_polys))
+  }
+  
+  # Area-weighted extract onto 10km polygons
+  mld_vals <- exactextractr::exact_extract(r_summer_mean, year_polys, 'mean', progress = FALSE)
+  
+  # Return tabular data with spatial join identifiers
+  out <- year_polys %>%
+    #st_drop_geometry() %>%
+    mutate(
+      mean_mld_m = mld_vals,
+      source_file = basename(f)
+    )
+  
+  return(out)
+}
+
+# -----------------------------------------------------------------------------
+# 5. Parallel Execution
+# -----------------------------------------------------------------------------
+
+plan(multisession, workers = 6)
+
+all_mld_results <- future_lapply(fls, function(f) {
+  tryCatch(
+    extract_summer_mld(f, grid_sf_polys, months.list),
+    error = function(e) NULL
+  )
+}, future.seed = TRUE)
+
+plan(sequential)
+
+# Combine into single table
+mld_grid_table <- dplyr::bind_rows(all_mld_results)
+
+# -----------------------------------------------------------------------------
+# Explore output
+# -----------------------------------------------------------------------------
+
+# Check results
+head(mld_grid_table)
+
+ggplot() +
+  geom_sf(data = mld_grid_table, aes(col = mean_mld_m)) +
+  geom_sf(data = PacificCoast.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  facet_wrap(~Year, ncol = 5) + 
+  theme_bw()
+
+mld_grid_table_final <- mld_grid_table %>%
+  st_drop_geometry() # Geometry drops, but X, Y, cell_id, Year remain!
+  
+```
+
+# Finish creating prediction grid
+
+```{r, finish.grid.creation}
+
+# Replicate grid across years for summer
+s2.grid.yr <- replicate_df(data_with_coords, ("Year"),
+                           unique(Summer.dat$Year))
+                  
+# Safely join MLD by X, Y, and Year
+s2.grid.yr <- s2.grid.yr %>%
+  left_join(
+    mld_grid_table_final %>% 
+      select(X, Y, Year, mean_mld_m), 
+    by = c("X", "Y", "Year")
+  ) %>%
+  mutate(
+    YearSeas = paste0(Year,"Summer"),
+    YearSeas.nm = as.numeric(paste0(Year,".1")),
+    # Convert to km for prediction
+    X = X/1000,
+    # Convert to km for prediction
+    Y = Y/1000,
+    # Set offset to 0 for prediction grid, this will
+    # allow for density to be predicted for every 
+    # 1 unit effort in the model
+    LogArea = 0,
+    # Area of 10 km x 10 km grid cell in m^2
+    cell_area_m2   = 100*1e6,
+    # Calculate volume in m^3 for index integration
+    cell_volume_m3_time_varyingMLD = cell_area_m2 * mean_mld_m,
+    # Calculate volume in m^3 for index integration
+    cell_volume_m3_time_mean_MLD = cell_area_m2 * mean(mean_mld_m, na.rm = T)
+  )
+                         
+# 1. Close parallel workers so 100% of RAM is free for a single process
+plan(sequential)
+
+# 2. Force R to clean up unused memory
+gc()
+
+# 1. Filter out land cells where MLD or volume is NA / NaN
+s2.grid.water <- s2.grid.yr %>%
+  filter(
+    !is.na(mean_mld_m), 
+    !is.nan(mean_mld_m),
+    !is.na(cell_volume_m3_time_varyingMLD),
+    !is.nan(cell_volume_m3_time_varyingMLD),
+    !is.na(cell_volume_m3_time_mean_MLD),
+    !is.nan(cell_volume_m3_time_mean_MLD)
+  ) %>%
+  # 2. Also drop NAs for any other environmental covariates used in your model formula
+  # e.g., filter(!is.na(depth), !is.na(temp)) %>%
+  as.data.frame()
+
+# Verify how many ocean cells remain vs total grid cells
+cat("Original cells (with land):", nrow(s2.grid.yr), "\n")
+cat("Water-only cells:", nrow(s2.grid.water), "\n")
+cat("Remaining NAs:", sum(is.na(s2.grid.water$cell_volume_m3_time_varyingMLD)), "\n")
+
+# Check visually
+ggplot(s2.grid.water, aes(x = X, y = Y, fill = mean_mld_m)) +
+  geom_tile(width = 10, height = 10) + # Coordinates converted to km
+  scale_fill_viridis_c(
+    option = "mako",
+    direction = -1,
+    name = "MLD (m)") +
+  coord_fixed() +
+  labs(title = "Clean Ocean Prediction Grid (Land Masked Out)") +
+  theme_minimal()
+
+```
+
+# Predict summer values onto grid with mean mld * area per year per cell
+
+```{r, predict.on.grid}
+
+# Make predictions on the entire grid 
+Summer.pred.no.imputations <- 
+  predict(deltalognormal.loglink.reml, 
+          s2.grid.water,
+          offset  = s2.grid.water$LogArea,  # Manually supply the vector
+          return_tmb_object = TRUE)
+
+# Note unlike get_index_split() you use the prediction object and do not pass new data
+index <- get_index(Summer.pred.no.imputations, 
+                         bias_correct = TRUE, 
+                         level = 0.95,
+                         area = s2.grid.water$cell_volume_m3_time_varyingMLD
+                         )
+
+# Check if the maximum gradient is small (ideally < 0.001)
+max(deltalognormal.loglink.reml$gradients)
+# [1] 1.088196e-11   
+
+# Check if the Hessian is positive definite
+deltalognormal.loglink.reml$pos_def_hessian
+# [1] TRUE
+
+fwrite(index,  
+       here(new_directory_path2,
+            "deltalognormalLogArea.reml.index.10km.csv"),
+       sep = ",")
+
+```
+
+# Plot index with mean mld * area per year per cell
+
+```{r, create.index.figures_mean.mld.per.year.per.cell}
+
+#------------------------------------------------------------------------
+# Plot index and confidence interval
+#------------------------------------------------------------------------
+
+global.index.95CI <-
+  ggplot() + 
+  geom_line(data = index,
+            aes(x= YearSeas.nm, y = est), color = "blue", 
+            linewidth = 1) +
+  geom_ribbon(data = index, 
+              aes(x= YearSeas.nm, ymin = lwr, ymax = upr), 
+              fill = "blue", alpha = 0.2) +
+  labs(title = "Annual abundance indices (kg) with 95 % confidence interval") +
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  theme_minimal(base_size = 18)
+
+global.index.95CI
+
+ggsave2(
+  filename=
+    "deltalognormalLogArea.index_MeanMLD-PerYearPerCell.95CI.10km2.jpeg",
+        plot=global.index.95CI, 
+  device = "jpeg", 
+  path = new_directory_path,
+  dpi = 1200, 
+  width = 45,      
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+)
+
+#------------------------------------------------------------------------
+# Check the range and values of se
+#------------------------------------------------------------------------
+
+summary(index$se)  
+
+#------------------------------------------------------------------------
+# Add file to full csv
+#------------------------------------------------------------------------
+
+# Update accordingly
+index.save.is.made = T
+
+if (index.save.is.made == F){
+  index.save <- index %>%
+    mutate(Area = "Global",
+           Year = substr(YearSeas.nm, 1,4),
+           Model = "DeltaLognormalFullBaseModel",
+           Method	= 
+             "IntegrCanadianDatNoImpsNoCoVar.w.SptlEffSptlTempEff2008&2012-2024.10km.res",
+           Seas = "Summer",
+           Data = "DFO+NewNOAARepositoryData",
+           Error = "iid"
+           ) %>%
+    select(-YearSeas.nm)
+  
+  fwrite(index.save, here("Final.Results", 
+                          "area.abundance.indices_FullBaseModel.csv"), 
+         sep = ",")
+}
+
+#------------------------------------------------------------------------
+# Plot index with error bar confidence interval
+#------------------------------------------------------------------------
+
+global.index.95CI.with.errBar <-
+  ggplot() + 
+  geom_errorbar(data = index,
+                aes(x = YearSeas.nm, ymin = lwr, ymax = upr), 
+                 color = "blue", linewidth = .75, width = 0.2) + 
+  geom_line(data = index, 
+             aes(x = YearSeas.nm, y = est), 
+             color = "black", linewidth = 1) +
+  geom_point(data = index, 
+             aes(x = YearSeas.nm, y = est), 
+             color = "black", size = 2, shape = 19) + 
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  theme_minimal(base_size = 18) +
+  labs(x = "Year", y = "Annual abundance indices estimates (kg)") +
+  ggtitle(str_wrap("Global biomass estimates with error bars and 95% confidence intervals", width = 48))
+
+global.index.95CI.with.errBar
+
+ggsave2(
+  filename=
+    "deltalognormalLogArea.index_MeanMLD-PerYearPerCell.95CI.w.errbar.10km2.jpeg",
+        plot=global.index.95CI.with.errBar, 
+  device = "jpeg", 
+  path = new_directory_path,
+  dpi = 1200, 
+  width = 45,      
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+)
+
+```
+
+# Adjust units
+
+```{r, adjust.units.for.projection}
+
+range(Summer.pred.no.imputations$data$X)
+#
+range(Summer.pred.no.imputations$data$Y)
+#
+
+# Adjust to meters:
+Summer.pred.no.imputations$data$X <-
+  Summer.pred.no.imputations$data$X*1000
+
+Summer.pred.no.imputations$data$Y <-
+  Summer.pred.no.imputations$data$Y*1000
+
+
+# 'stars' will automatically identify the unique X, Y, Year combinations
+# and create a grid. All other numeric columns will become attributes.
+Summer.pred_obj <- st_as_stars(Summer.pred.no.imputations$data,
+                               dims = c("X", "Y", "Year"))
+
+# Specify the CRS for the stars object
+Summer.pred_obj <- st_set_crs(Summer.pred_obj, aea_custom) # Setting PROJ.4 string
+
+# Print the stars object to see its structure, including the CRS
+print(Summer.pred_obj)
+
+ggplot() +
+geom_stars(data = Summer.pred_obj, 
+                 aes(fill = exp(est1))) +
+  geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699")
+
+```
+
+# Try looping through Year Maps
+
+## For fixed + random effects
+
+For presence absence component 
+
+```{r, year.map.est1.loop}
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+  
+  # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+  # We leave the first 3 blank to get all variables and all space
+  bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+  est.y1 <- ggplot() +
+    # 1. Data Layer on top
+    geom_stars(data = bin_subset,
+               aes(fill = plogis(est1))) +
+     # 2. Base Land Layers First
+    geom_sf(data = PacificCoast.aea_custom,
+            color = "#ae8f60", 
+            linewidth = 0.7, 
+            fill = "#E1C699") +
+    geom_sf(data = PCoastStates.aea_custom,
+            color = "#ae8f60", 
+            linewidth = 0.7, 
+            fill = "#E1C699") +
+    ## To better visualize spatial patterns, the color scale for the 
+    ## exponentiated predicted values 
+    scale_fill_viridis_c(
+      option = "inferno",
+      direction = -1,
+      limits = c(0, 1), # Fixed 0 to 1 scale for probability comparison across years
+      labels = scales::label_number(accuracy = 0.1),
+      guide = guide_colorbar(title = "Probability of\nOccurrence (0–1)")
+      ) +
+    ggtitle(paste("Summer Biomass - Year:", current_year,
+                  "\nFixed effects + all random effects")) +
+    labs(y = "Latitude") +
+    theme_bw() +
+    theme(axis.title.x=element_blank(),
+          axis.text.x=element_blank(),
+          axis.ticks.x=element_blank())
+    
+  # FORCE PRINT for RMarkdown
+  print(est.y1)
+    
+  # 3. Save Logic
+  file_name <- paste0("BiomassMap_", current_year, "_FixedPlusRandom.effects.M1.jpg")
+  full_destination <- file.path(new_directory_path, file_name)
+    
+  ggsave(
+    filename = full_destination,
+    plot = est.y1, 
+    device = "jpeg", 
+    dpi = 1200, 
+    width = 45,      
+    height = 21, 
+    units = "cm", 
+    limitsize = FALSE
+    )
+    
+  # Optional: Clear the plot from memory to stay fast
+  rm(est.y1) 
+}
+
+```
+
+For density component 
+
+```{r, year.map.est2.loop}
+
+all_densities_est2 <- exp(Summer.pred_obj$est2)
+min_dens_est2 <- min(all_densities_est2, na.rm = TRUE)
+max_dens_est2 <- max(all_densities_est2, na.rm = TRUE)
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+  
+  # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+  # We leave the first 3 blank to get all variables and all space
+  bin_subset <- Summer.pred_obj[, , , y_idx ]
+  
+  est.y2 <- ggplot() +
+    # 1. Data Layer on top
+    geom_stars(data = bin_subset, 
+               aes(fill = exp(est2))) +
+    # 2. Base Land Layers First
+    geom_sf(data = PacificCoast.aea_custom,
+            color = "#ae8f60", 
+            linewidth = 0.7, 
+            fill = "#E1C699") +
+    geom_sf(data = PCoastStates.aea_custom,
+            color = "#ae8f60", 
+            linewidth = 0.7, 
+            fill = "#E1C699") +
+    ## To better visualize spatial patterns, the color scale for the 
+    ## exponentiated predicted values 
+    scale_fill_viridis_c(
+      option = "inferno",
+      direction = -1,
+      trans = "log10", # This is the magic line
+      limits = c(min_dens_est2, max_dens_est2),
+      # Using scales package for pretty labels like 1e-05
+      labels = scales::label_log(), 
+      guide = guide_colorbar(title = "Biomass - η\n(kg/m³; Log Scale)")) +
+    ggtitle(paste("Summer Biomass - Year:", current_year, 
+                  "\nFixed effects + all random effects")) +
+    labs(y = "Latitude") +
+    theme_bw() +
+    theme(axis.title.x=element_blank(),
+          axis.text.x=element_blank(),
+          axis.ticks.x=element_blank())
+  
+  # FORCE PRINT for RMarkdown
+  print(est.y2)
+    
+  # 3. Save Logic
+  file_name <- paste0("BiomassMap_", current_year, "_FixedPlusRandom.effects.M2.jpg")
+  full_destination <- file.path(new_directory_path, file_name)
+    
+  ggsave(
+    filename = full_destination,
+    plot = est.y2, 
+    device = "jpeg", 
+    dpi = 1200, 
+    width = 45,      
+    height = 21, 
+    units = "cm", 
+    limitsize = FALSE
+    )
+    
+  # Optional: Clear the plot from memory to stay fast
+  rm(est.y2)
+  }
+
+```
+
+## For fixed effects only
+
+For presence absence component 
+
+```{r, year.map.est_non_rf1.loop}
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+    
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    est_non_rf.y1 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = plogis(est_non_rf1))) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_viridis_c(
+        option = "inferno",
+        direction = -1,
+        limits = c(0, 1), # Fixed 0 to 1 scale for probability comparison across years
+        labels = scales::label_number(accuracy = 0.1),
+        guide = guide_colorbar(title = "Probability of\nOccurrence (0–1)")
+        ) +
+      ggtitle(paste("Summer Biomass - Year:", current_year, "\nFixed effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(est_non_rf.y1)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_fixed.effects.M1.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = est_non_rf.y1, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(est_non_rf.y1)
+    }
+
+```
+
+For density component 
+
+```{r, year.map.est_non_rf2.loop}
+
+all_densities_est_non_rf2 <- exp(Summer.pred_obj$est_non_rf2)
+min_dens_est_non_rf2 <- min(all_densities_est_non_rf2, na.rm = TRUE)
+max_dens_est_non_rf2 <- max(all_densities_est_non_rf2, na.rm = TRUE)
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+    
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    est_non_rf.y2 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = exp(est_non_rf2))) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_viridis_c(
+        option = "inferno",
+        direction = -1,
+        trans = "log10", # This is the magic line
+        limits = c(min_dens_est_non_rf2, max_dens_est_non_rf2),
+        na.value = "transparent",
+        # Using scales package for pretty labels like 1e-05
+        labels = scales::label_log(), 
+        guide = guide_colorbar(title = "Biomass - Xβ\n(kg/m³; Log Scale)")
+        ) +
+      ggtitle(paste("Summer Biomass - Year:", current_year,  
+                    "\nFixed effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(est_non_rf.y2)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_fixed.effects.M2.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = est_non_rf.y2, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(est_non_rf.y2)
+    }
+
+```
+
+## For random effects only
+
+For presence absence component 
+
+```{r, year.map.est_rf1.loop}
+
+all_densities_est_rf1 <- Summer.pred_obj$est_rf1
+min_dens_est_rf1 <- min(all_densities_est_rf1, na.rm = TRUE)
+max_dens_est_rf1 <- max(all_densities_est_rf1, na.rm = TRUE)
+
+# Calculate the limit based ONLY on the data in this specific bin/year
+# We use max(abs(...)) to ensure it is symmetric (e.g., -5.5 to 5.5)
+current_range_est_rf1 <- range(bin_subset[["est_rf1"]], na.rm = TRUE)
+dynamic_limit_est_rf1 <- max(abs(current_range_est_rf1))
+
+# Debugging: Print this to your console so you can see it
+print(paste("Data range is:", current_range_est_rf1[1], "to", current_range_est_rf1[2]))
+print(paste("Setting limits to:", -dynamic_limit_est_rf1, "to", dynamic_limit_est_rf1))
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+    
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    est_rf.y1 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = est_rf1)) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_gradient2(
+        low = "blue",      # Color for negative effects (low biomass)
+        mid = "white",     # Color for zero (neutral)
+        high = "red",      # Color for positive effects (high biomass)
+        midpoint = 0,      # CRITICAL: Fixes the neutral point at 0
+        limits = c(-dynamic_limit_est_rf1, dynamic_limit_est_rf1), # Forces symmetry
+        # THIS IS THE KEY:
+        oob = scales::squish,
+        na.value = "transparent",
+        guide = guide_colorbar(title = "Random Effects\n(ω + ε)")
+        ) +
+      ggtitle(paste("Summer Biomass - Year:", current_year, "\nRandom effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(est_rf.y1)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_random.effects.M1.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = est_rf.y1, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(est_rf.y1)
+    }
+
+```
+
+For density component 
+
+```{r, year.map.est_rf2.loop}
+
+all_densities_est_rf2 <- Summer.pred_obj$est_rf2
+min_dens_est_rf2 <- min(all_densities_est_rf2, na.rm = TRUE)
+max_dens_est_rf2 <- max(all_densities_est_rf2, na.rm = TRUE)
+
+# Calculate the limit based ONLY on the data in this specific bin/year
+# We use max(abs(...)) to ensure it is symmetric (e.g., -5.5 to 5.5)
+current_range_est_rf2 <- range(bin_subset[["est_rf2"]], na.rm = TRUE)
+dynamic_limit_est_rf2 <- max(abs(current_range_est_rf2))
+
+# Debugging: Print this to your console so you can see it
+print(paste("Data range is:", current_range_est_rf2[1], "to", current_range_est_rf2[2]))
+print(paste("Setting limits to:", -dynamic_limit_est_rf2, "to", dynamic_limit_est_rf2))
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+    
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    est_rf.y2 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = est_rf2)) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_gradient2(
+        low = "blue",      # Color for negative effects (low biomass)
+        mid = "white",     # Color for zero (neutral)
+        high = "red",      # Color for positive effects (high biomass)
+        midpoint = 0,      # CRITICAL: Fixes the neutral point at 0
+        limits = c(-dynamic_limit_est_rf1, dynamic_limit_est_rf1), # Forces symmetry
+        # THIS IS THE KEY:
+        oob = scales::squish,
+        na.value = "transparent",
+        guide = guide_colorbar(title = "Random Effects\n(ω + ε)")
+        ) +
+      ggtitle(paste("Summer Biomass - Year:", current_year, "\nRandom effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(est_rf.y2)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_random.effects.M2.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = est_rf.y2, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(est_rf.y2)
+    }
+
+```
+
+## For spatial random effects only
+
+For presence absence component 
+
+```{r, year.map.omega_s1.loop}
+
+all_densities_omega_s1 <- Summer.pred_obj$omega_s1
+min_dens_omega_s1 <- min(all_densities_omega_s1, na.rm = TRUE)
+max_dens_omega_s1 <- max(all_densities_omega_s1, na.rm = TRUE)
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+    
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    omega_s.y1 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = omega_s1)) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_gradient2(
+        low = "blue",      # Color for negative effects (low biomass)
+        mid = "white",     # Color for zero (neutral)
+        high = "red",      # Color for positive effects (high biomass)
+        midpoint = 0,      # CRITICAL: Fixes the neutral point at 0
+        guide = guide_colorbar(title = "Spatial Random\nEffects (ω)")
+        ) +
+      ggtitle(paste("Summer Biomass - Year:", current_year, "\nSptl. Random effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(omega_s.y1)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_SptlRandom.effects.M1.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = omega_s.y1, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(omega_s.y1)
+    }
+
+```
+
+For density component 
+
+```{r, year.map.omega_s2.loop}
+
+all_densities_omega_s2 <- Summer.pred_obj$omega_s2
+min_dens_omega_s2 <- min(all_densities_omega_s2, na.rm = TRUE)
+max_dens_omega_s2 <- max(all_densities_omega_s2, na.rm = TRUE)
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+      
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    omega_s.y2 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = omega_s2)) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_gradient2(
+        low = "blue",      # Color for negative effects (low biomass)
+        mid = "white",     # Color for zero (neutral)
+        high = "red",      # Color for positive effects (high biomass)
+        midpoint = 0,      # CRITICAL: Fixes the neutral point at 0
+        guide = guide_colorbar(title = "Spatial Random\nEffects (ω)")
+        ) +
+      ggtitle(paste("Summer Biomass - Year:", current_year, "\nSptl. Random effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(omega_s.y2)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_SptlRandom.effects.M2.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = omega_s.y2, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(omega_s.y2)
+    }
+
+```
+
+## For spatialtemporal random effects only
+
+For presence absence component 
+
+```{r, year.map.epsilon_st1.loop}
+
+all_densities_epsilon_st1 <- Summer.pred_obj$epsilon_st1
+min_dens_epsilon_st1 <- min(all_densities_epsilon_st1, na.rm = TRUE)
+max_dens_epsilon_st1 <- max(all_densities_epsilon_st1, na.rm = TRUE)
+
+# Calculate the limit based ONLY on the data in this specific bin/year
+# We use max(abs(...)) to ensure it is symmetric (e.g., -5.5 to 5.5)
+current_range_epsilon_st1 <- range(bin_subset[["epsilon_st1"]], na.rm = TRUE)
+dynamic_limit_epsilon_st1 <- max(abs(current_range_epsilon_st1))
+
+# Debugging: Print this to your console so you can see it
+print(paste("Data range is:", current_range_epsilon_st1[1], "to", current_range_epsilon_st1[2]))
+print(paste("Setting limits to:", -dynamic_limit_epsilon_st1, "to", dynamic_limit_epsilon_st1))
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+  
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    epsilon_st.y1 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = epsilon_st1)) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_gradient2(
+        low = "blue",      # Color for negative effects (low biomass)
+        mid = "white",     # Color for zero (neutral)
+        high = "red",      # Color for positive effects (high biomass)
+        midpoint = 0,      # CRITICAL: Fixes the neutral point at 0
+        # Use the dynamic limit we just calculated
+        limits = c(-dynamic_limit_epsilon_st1, dynamic_limit_epsilon_st1), 
+        # THIS IS THE KEY:
+        oob = scales::squish,
+        na.value = "transparent",
+        guide = guide_colorbar(title = "Spatial Temporal\nRandom Effects (ε)")
+        ) +
+      coord_sf() +
+      ggtitle(paste("Summer Biomass - Year:", current_year, 
+                    "Sptl. Temp. Random effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(epsilon_st.y1)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_",
+                        "SptlTempRandom.effects.M1.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = epsilon_st.y1, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(epsilon_st.y1)
+  }
+
+```
+
+## For spatialtemporal random effects only
+
+For presence absence component 
+
+```{r, year.map.epsilon_st1.loop}
+
+all_densities_epsilon_st1 <- Summer.pred_obj$epsilon_st1
+min_dens_epsilon_st1 <- min(all_densities_epsilon_st1, na.rm = TRUE)
+max_dens_epsilon_st1 <- max(all_densities_epsilon_st1, na.rm = TRUE)
+
+# Calculate the limit based ONLY on the data in this specific bin/year
+# We use max(abs(...)) to ensure it is symmetric (e.g., -5.5 to 5.5)
+current_range_epsilon_st1 <- range(bin_subset[["epsilon_st1"]], na.rm = TRUE)
+dynamic_limit_epsilon_st1 <- max(abs(current_range_epsilon_st1))
+
+# Debugging: Print this to your console so you can see it
+print(paste("Data range is:", current_range_epsilon_st1[1], "to", current_range_epsilon_st1[2]))
+print(paste("Setting limits to:", -dynamic_limit_epsilon_st1, "to", dynamic_limit_epsilon_st1))
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+  
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    epsilon_st.y1 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = epsilon_st1)) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_gradient2(
+        low = "blue",      # Color for negative effects (low biomass)
+        mid = "white",     # Color for zero (neutral)
+        high = "red",      # Color for positive effects (high biomass)
+        midpoint = 0,      # CRITICAL: Fixes the neutral point at 0
+        # Use the dynamic limit we just calculated
+        limits = c(-dynamic_limit_epsilon_st1, dynamic_limit_epsilon_st1), 
+        # THIS IS THE KEY:
+        oob = scales::squish,
+        na.value = "transparent",
+        guide = guide_colorbar(title = "Spatial Temporal\nRandom Effects (ε)")
+        ) +
+      coord_sf() +
+      ggtitle(paste("Summer Biomass - Year:", current_year, 
+                    "Sptl. Temp. Random effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(epsilon_st.y1)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_",
+                        "SptlTempRandom.effects.M1.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = epsilon_st.y1, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(epsilon_st.y1)
+  }
+
+```
+
+For density component 
+
+```{r, year.map.epsilon_st2.loop}
+
+all_densities_epsilon_st2 <- Summer.pred_obj$epsilon_st2
+min_dens_epsilon_st2 <- min(all_densities_epsilon_st2, na.rm = TRUE)
+max_dens_epsilon_st2 <- max(all_densities_epsilon_st2, na.rm = TRUE)
+
+# Calculate the limit based ONLY on the data in this specific bin/year
+# We use max(abs(...)) to ensure it is symmetric (e.g., -5.5 to 5.5)
+current_range_epsilon_st2 <- range(bin_subset[["epsilon_st2"]], na.rm = TRUE)
+dynamic_limit_epsilon_st2 <- max(abs(current_range_epsilon_st2))
+
+# Debugging: Print this to your console so you can see it
+print(paste("Data range is:", current_range_epsilon_st2[1], "to", current_range_epsilon_st2[2]))
+print(paste("Setting limits to:", -dynamic_limit_epsilon_st2, "to", dynamic_limit_epsilon_st2))
+
+# Optional: If your data has extreme outliers, you might want to 
+# manually set the max to the 99th percentile to keep the maps readable.
+# max_dens <- quantile(all_densities, 0.99, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path)) {
+  dir.create(new_directory_path, recursive = TRUE)
+}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+  
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj[, , , y_idx ]
+    
+    epsilon_st.y2 <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = epsilon_st2)) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_gradient2(
+        low = "blue",      # Color for negative effects (low biomass)
+        mid = "white",     # Color for zero (neutral)
+        high = "red",      # Color for positive effects (high biomass)
+        midpoint = 0,      # CRITICAL: Fixes the neutral point at 0
+        # Use the dynamic limit we just calculated
+        limits = c(-dynamic_limit_epsilon_st2, dynamic_limit_epsilon_st2), 
+        # THIS IS THE KEY:
+        oob = scales::squish,
+        na.value = "transparent",
+        guide = guide_colorbar(title = "Spatial Temporal\nRandom Effects (ε)")
+        ) +
+      coord_sf() +
+      ggtitle(paste("Summer Biomass - Year:", current_year, 
+                    "Sptl. Temp. Random effects")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(epsilon_st.y2)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_",
+                        "SptlTempRandom.effects.M2.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = epsilon_st.y2, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(epsilon_st.y2)
+  }
+
+```
+
+# Combine both model components
+
+```{r, join.model.components.pred.abund}
+
+# Check for a combined model component estimate
+colnames(Summer.pred.no.imputations$data)
+
+# If none exist, use the following:
+Summer.pred_obj2 <- Summer.pred_obj %>%
+  # apply the inverse logit function "plogis"
+  ## and the inverse log function "exp"
+  mutate(estComb = plogis(est1) * exp(est2))
+
+all_densities_estcomb <- Summer.pred_obj2$estComb
+min_dens_estcomb <- min(all_densities_estcomb, na.rm = TRUE)
+max_dens_estcomb <- max(all_densities_estcomb, na.rm = TRUE)
+
+# Ensure the directory exists before the loop starts
+if (!dir.exists(new_directory_path2)) {
+  dir.create(new_directory_path2, recursive = TRUE)
+}
+
+```
+
+# Create a panel figure of the combined estimates by year
+
+```{r, estCombPanel}
+
+estcombpanel <-
+  ggplot() +
+  # 1. Data Layer on top
+  geom_stars(data = Summer.pred_obj2, 
+             aes(fill = estComb)) +
+  # 2. Base Land Layers First
+  geom_sf(data = PacificCoast.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom,
+          color = "#ae8f60", 
+          linewidth = 0.7, 
+          fill = "#E1C699") +
+  ## To better visualize spatial patterns, the color scale for the 
+  ## exponentiated predicted values 
+  scale_fill_viridis_c(
+    option = "inferno",
+    direction = -1,
+    trans = "log10", # This is the magic line
+    limits = c(min_dens_estcomb, max_dens_estcomb),
+    # Using scales package for pretty labels like 1e-05
+    labels = scales::label_log(), 
+    guide = guide_colorbar(title = "Biomass density \n(kg·m⁻³; log scale)")
+    ) +
+  facet_wrap(~Year, ncol = 5) +
+  labs(y = "Latitude") +
+  theme_bw(base_size = 18) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+estcombpanel
+
+file_name <- paste0("BiomassMap_panel_CombinedHurdleModel.jpg")
+full_destination <- file.path(new_directory_path, file_name)
+
+ggsave(
+  filename = full_destination,
+  plot = estcombpanel, 
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,      
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+```
+
+# Make separate figure per year
+
+```{r, estComb.per.year}
+
+# 1. Get the values for your loops
+years <- attr(Summer.pred_obj, "dimensions")$Year$values$start
+
+# 2. Start the loops using numeric indices
+for (y_idx in seq_along(years)) {
+  current_year <- years[y_idx]
+    
+    # SLICE THE STARS OBJECT: [attributes, X, Y, Year]
+    # We leave the first 3 blank to get all variables and all space
+    bin_subset <- Summer.pred_obj2[, , , y_idx ]
+    
+    est.y <- ggplot() +
+      # 1. Data Layer on top
+      geom_stars(data = bin_subset, 
+                 aes(fill = estComb)) +
+      # 2. Base Land Layers First
+      geom_sf(data = PacificCoast.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      geom_sf(data = PCoastStates.aea_custom,
+              color = "#ae8f60", 
+              linewidth = 0.7, 
+              fill = "#E1C699") +
+      ## To better visualize spatial patterns, the color scale for the 
+      ## exponentiated predicted values 
+      scale_fill_viridis_c(
+        option = "inferno",
+        direction = -1,
+        trans = "log10", # This is the magic line
+        limits = c(min_dens_estcomb, max_dens_estcomb),
+        # Using scales package for pretty labels like 1e-05
+        labels = scales::label_log(), 
+        guide = guide_colorbar(title = "Biomass density \n(kg·m⁻³; log scale)")
+        ) +
+      ggtitle(paste("Summer Biomass - Year:", current_year, "\nCombined Estimate")) +
+      labs(y = "Latitude") +
+      theme_bw() +
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank())
+    
+    # FORCE PRINT for RMarkdown
+    print(est.y)
+    
+    # 3. Save Logic
+    file_name <- paste0("BiomassMap_", current_year, "_CombinedHurdleModel.jpg")
+    full_destination <- file.path(new_directory_path, file_name)
+    
+    ggsave(
+      filename = full_destination,
+      plot = est.y, 
+      device = "jpeg", 
+      dpi = 1200, 
+      width = 45,      
+      height = 21, 
+      units = "cm", 
+      limitsize = FALSE
+      )
+    
+    # Optional: Clear the plot from memory to stay fast
+    rm(est.y)
+    }
+
+```
+
+# Run centre of gravity analysis
+ 
+```{r, cog.analyses}
+
+cog.is.made = T
+
+if (cog.is.made == F) {
+  
+years <- sort(unique(s2.grid.water$Year))
+
+cog_results <- list()
+
+ # Loop through each year to keep RAM usage low
+for (yr in years) {
+  message("Calculating COG for Year: ", yr)
+    
+  # 1. Subset grid for THIS year AND set the specific covariate level
+  grid_chunk <- s2.grid.water %>% 
+    filter(Year == yr) %>% 
+    as.data.frame()
+    
+  # 2. Run predict on the SINGLE year chunk
+  pred_obj <- predict(
+    deltalognormal.loglink.reml, 
+    newdata = grid_chunk, 
+    offset = grid_chunk$LogArea, # Vector length matches grid_chunk exactly
+    return_tmb_object = TRUE
+    )
+    
+  # 3. Calculate COG for this year/level chunk
+  cog_chunk <- get_cog(
+    pred_obj,
+    bias_correct = TRUE, 
+    level = 0.95,
+    area = grid_chunk$cell_volume_m3_time_varyingMLD, # Vector matches grid_chunk
+    format = "wide",
+    silent = TRUE
+    )
+    
+  # 4. Add identifying metadata columns
+  cog_chunk$Year <- yr
+    
+  # Store result in list
+  cog_results[[paste(yr)]] <- cog_chunk
+    
+  # 5. PURGE RAM BEFORE NEXT ITERATION
+  rm(pred_obj, grid_chunk, cog_chunk)
+  gc(verbose = FALSE)
+}
+
+# Stitch all chunks into one master data frame
+final_cog <- bind_rows(cog_results)
+
+# View final results
+View(final_cog)
+
+fwrite(final_cog, here(new_directory_path2, "centreofgravity.fullModel.csv"),
+       sep = ",")
+
+}
+
+# Load data
+final_cog <- fread(here(new_directory_path2, "centreofgravity.fullModel.csv"),
+                   sep = ",")
+
+NorthSouthMovement <-
+  ggplot(final_cog, aes(x = Year, y = est_y,)) +
+  geom_ribbon(aes(ymin = lwr_y, ymax = upr_y), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(
+    y = "Northing COG (km)",
+    title = "Northward/Southward Shift Over Time"
+  ) +
+  theme_minimal(base_size = 18)
+
+NorthSouthMovement
+
+full_destination <- file.path(new_directory_path, "NorthSouthMovement.fullModel.jpg")
+
+ggsave(
+  filename = full_destination,
+  plot = NorthSouthMovement, 
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,  
+  height = 21,
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+# -------------------------------------------------------------------
+# Step 1: Calculate Map Bounding Box (Auto-Zoom to Trajectory)
+# -------------------------------------------------------------------
+# Create scaled coordinates in meters
+cog_m <- final_cog %>% 
+  mutate(x_m = est_x * 1000, y_m = est_y * 1000)
+
+# Add a 50 km (50,000 m) buffer around your COG points
+x_min <- min(cog_m$x_m, na.rm = TRUE) - 200000
+x_max <- max(cog_m$x_m, na.rm = TRUE) + 200000
+y_min <- min(cog_m$y_m, na.rm = TRUE) - 200000
+y_max <- max(cog_m$y_m, na.rm = TRUE) + 200000
+
+# -------------------------------------------------------------------
+# Step 2: Plot High-Contrast 2D Map
+# -------------------------------------------------------------------
+TwoDimensionalMovement <- ggplot() +
+  
+  # LAYER 1 & 2: LAND & STATES (Drawn FIRST in background)
+  geom_sf(data = PacificCoast.aea_custom, color = "#ae8f60", linewidth = 0.5, fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom, color = "#ae8f60", linewidth = 0.5, fill = "#E1C699") +
+  
+  # LAYER 3: BLACK PATH OUTLINE (Creates a sharp contrast halo)
+  geom_path(
+    data = cog_m, 
+    aes(x = x_m, y = y_m), 
+    color = "black", 
+    linewidth = 1.4,
+    alpha = 0.7
+  ) +
+  
+  # LAYER 4: COLORED TRAJECTORY LINE & ARROW
+  geom_path(
+    data = cog_m, 
+    aes(x = x_m, y = y_m, color = factor(Year)), 
+    linewidth = 0.9,
+    arrow = arrow(length = unit(0.2, "cm"), type = "closed")
+  ) +
+  
+  # LAYER 5: CRISP BORDERED POINTS
+  geom_point(
+    data = cog_m, 
+    aes(x = x_m, y = y_m, fill = factor(Year)), 
+    shape = 21,       # Fillable circle with border
+    color = "black",  # Black outer ring makes points pop
+    size = 3.5,
+    stroke = 0.5
+  ) +
+  
+  # ZOOM MAP CLOSELY TO COG POINTS
+  coord_sf(
+    xlim = c(x_min, x_max),
+    ylim = c(y_min, y_max),
+    expand = FALSE
+  ) +
+  
+  # FACETING AND COLORING
+  scale_fill_viridis_d(
+    name = "Year",
+    breaks = c(2008, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019)
+    ) +
+  scale_color_viridis_d(
+    name = "Year",
+    breaks = c(2008, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019)
+    ) +
+  
+  # STYLING
+  labs(
+    x = "Longitude", 
+    y = "Latitude",
+    title = "2D Center of Gravity Trajectory Over Time",
+    color = "Year",
+    fill = "Year"
+  ) +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_text(angle = 90)
+  )
+
+TwoDimensionalMovement
+
+full_destination <- file.path(new_directory_path, "TwoDimensionalMovement.fullModel.jpg")
+
+ggsave(
+  filename = full_destination,
+  plot = TwoDimensionalMovement, 
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,     
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+```
+
+# Run effective volume occupied analysis by length bin
+
+```{r, eao.analyses}
+
+eao.is.made = T
+
+if (eao.is.made == F) {
+  
+years <- sort(unique(s2.grid.water$Year))
+
+eao_results <- list()
+
+# Loop through each year to keep RAM usage low
+for (yr in years) {
+  message("Calculating EAO for Year: ", yr)
+    
+  # 1. Subset grid for THIS year AND set the specific covariate level
+  grid_chunk <- s2.grid.water %>% 
+    filter(Year == yr) %>% 
+    as.data.frame()
+    
+  # 2. Run predict on the SINGLE year chunk
+  pred_obj <- predict(
+    deltalognormal.loglink.reml, 
+    newdata = grid_chunk, 
+    offset = grid_chunk$LogArea, # Vector length matches grid_chunk
+    return_tmb_object = TRUE
+    )
+  
+  # 3. Calculate EAO for this year/level chunk  
+  eao_chunk <- get_eao(
+    pred_obj,
+    bias_correct = FALSE, 
+    level = 0.95,
+    area = grid_chunk$cell_volume_m3_time_varyingMLD, # <-- FIX: Use grid_chunk here!
+    silent = TRUE
+    )
+    
+  # 4. Add identifying metadata columns
+  eao_chunk$Year <- yr
+    
+  # Store result in list
+  eao_results[[paste(yr)]] <- eao_chunk
+    
+  # 5. PURGE RAM BEFORE NEXT ITERATION
+  rm(pred_obj, grid_chunk, eao_chunk)
+  gc(verbose = FALSE)
+}
+
+# Stitch all chunks into one master data frame
+final_eao <- bind_rows(eao_results)
+
+# View final results
+View(final_eao)
+
+fwrite(final_eao, here(new_directory_path2, "effectiveareaoccupied.fullModel.csv"),
+       sep = ",")
+}
+
+# Load eao data
+final_eao <- fread(here(new_directory_path2, "effectiveareaoccupied.fullModel.csv"),
+                   sep = ",")
+
+```
+
+# Compare centre of gravity against effective volume occupied
+
+```{r, cog_vs_eao}
+
+# 1. Prep COG Northing (Y coordinate)
+cog_y <- final_cog %>% 
+  select(Year, est_cog = est_y, lwr_cog = lwr_y, upr_cog = upr_y)
+
+# 2. Prep EAO
+eao_clean <- final_eao %>% 
+  select(Year, est_eao = est, lwr_eao = lwr, upr_eao = upr)
+
+# 3. Panel 1: Center of Gravity (Northing / Y)
+p1 <- ggplot(cog_y, aes(x = Year, y = est_cog)) +
+  geom_ribbon(aes(ymin = lwr_cog, ymax = upr_cog), alpha = 0.2, color = NA) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(y = "Northing COG (km)", title = "Spatial Centroid Shift (COG)") +
+  theme_bw(base_size = 18) +
+  theme(axis.title.x = element_blank())
+
+# 4. Panel 2: Effective Area Occupied (EAO)
+p2 <- ggplot(eao_clean, aes(x = Year, y = est_eao)) +
+  geom_ribbon(aes(ymin = lwr_eao, ymax = upr_eao), alpha = 0.2, color = NA) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(y = "Occupied Volume (m³)", title = "Effective Volume Occupied (EVO)") +
+  theme_bw(base_size = 18)
+
+# Combine vertically
+cog_eao_fig <- p1 / p2 + plot_layout(guides = "collect")
+
+cog_eao_fig
+
+full_destination <- file.path(new_directory_path, "COGvsEAO.fullModel.jpg")
+
+ggsave(
+  filename = full_destination,
+  plot = cog_eao_fig, 
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,     
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+```
+
+# Create a single panel with all movement diagnostics
+
+```{r, 2D-cog_vs_cog_vs_eao}
+#-----------------------------------------
+# For 2D centre of gravity map
+#-----------------------------------------
+
+# Create scaled coordinates in meters
+cog_m <- final_cog %>% 
+  mutate(x_m = est_x * 1000, y_m = est_y * 1000)
+
+# Add a 50 km (50,000 m) buffer around your COG points
+x_min <- min(cog_m$x_m, na.rm = TRUE) - 200000
+x_max <- max(cog_m$x_m, na.rm = TRUE) + 200000
+y_min <- min(cog_m$y_m, na.rm = TRUE) - 200000
+y_max <- max(cog_m$y_m, na.rm = TRUE) + 200000
+
+# Panel 0: High-Contrast 2D Map
+p0 <- ggplot() +
+  # LAYER 1 & 2: LAND & STATES (Drawn FIRST in background)
+  geom_sf(data = PacificCoast.aea_custom, color = "#ae8f60", linewidth = 0.5, fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom, color = "#ae8f60", linewidth = 0.5, fill = "#E1C699") +
+  # LAYER 3: BLACK PATH OUTLINE (Creates a sharp contrast halo)
+  geom_path(
+    data = cog_m, 
+    aes(x = x_m, y = y_m), 
+    color = "black", 
+    linewidth = 1.4,
+    alpha = 0.7
+  ) +
+  # LAYER 4: COLORED TRAJECTORY LINE & ARROW
+  geom_path(
+    data = cog_m, 
+    aes(x = x_m, y = y_m, color = factor(Year)), 
+    linewidth = 0.9,
+    arrow = arrow(length = unit(0.2, "cm"), type = "closed")
+  ) +
+  # LAYER 5: CRISP BORDERED POINTS
+  geom_point(
+    data = cog_m, 
+    aes(x = x_m, y = y_m, fill = factor(Year)), 
+    shape = 21,       # Fillable circle with border
+    color = "black",  # Black outer ring makes points pop
+    size = 3.5,
+    stroke = 0.5
+  ) +
+  # ZOOM MAP CLOSELY TO COG POINTS
+  coord_sf(
+    xlim = c(x_min, x_max),
+    ylim = c(y_min, y_max),
+    expand = FALSE
+  ) +
+  # FACETING AND COLORING
+  scale_fill_viridis_d(
+    name = "Year",
+    breaks = c(2008, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019)
+    ) +
+  scale_color_viridis_d(
+    name = "Year",
+    breaks = c(2008, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019)
+    ) +
+  # STYLING
+  labs(
+    x = "Longitude", 
+    y = "Latitude",
+    title = str_wrap("2D Center of Gravity Trajectory Over Time", width = 31),
+    color = "Year",
+    fill = "Year"
+  ) +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_text(angle = 90)
+  )
+
+#-----------------------------------------
+# For North-South centre of gravity
+#-----------------------------------------
+
+# Prep COG Northing (Y coordinate)
+cog_y <- final_cog %>% 
+  select(Year, est_cog = est_y, lwr_cog = lwr_y, upr_cog = upr_y)
+
+# Panel 1: Center of Gravity (Northing / Y)
+p1 <- ggplot(cog_y, aes(x = Year, y = est_cog)) +
+  geom_ribbon(aes(ymin = lwr_cog, ymax = upr_cog), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  scale_y_continuous(position = "right") + # Move Y-axis to the right
+  labs(y = "Northing COG (km)", title = "Spatial Centroid Shift (COG)") +
+  theme_bw(base_size = 18) +
+  theme(axis.title.x = element_blank(), 
+        plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"))
+
+#-----------------------------------------
+# For Effective area occupied 
+#-----------------------------------------
+
+# Prep EAO
+eao_clean <- final_eao %>% 
+  select(Year, est_eao = est, lwr_eao = lwr, upr_eao = upr)
+
+# Panel 2: Effective Area Occupied (EAO)
+p2 <- ggplot(eao_clean, aes(x = Year, y = est_eao)) +
+  geom_ribbon(aes(ymin = lwr_eao, ymax = upr_eao), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  scale_y_continuous(position = "right") + # Move Y-axis to the right
+  labs(y = "Occupied Volume (m³)", title = "Effective Habitat Footprint (EAO)") +
+  theme_bw(base_size = 18) +
+  theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"))
+
+# -----------------------------------------------------------------------------
+# 5. Combine Plots & Format for CJFAS
+# -----------------------------------------------------------------------------
+
+# 1. Attach legend to p0 and strip panel margins
+p0_tight <- p0 + 
+  theme(
+    legend.position = "left",
+    legend.box.margin = margin(0, 0, 0, 0),
+    legend.margin = margin(0, 0, 0, 0), 
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt")
+  )
+
+p0_tight
+
+# 2. Combine into a clean 2-column layout
+final_fig <- p0_tight + (p1 / p2) + 
+  plot_layout(widths = c(0.25, 1)) +
+  plot_annotation(
+    tag_levels = 'a',
+    tag_prefix = '(',
+    tag_suffix = ')'
+  ) & 
+  theme(
+    plot.tag = element_text(face = "bold", size = 18),
+    legend.box.margin = margin(0, 0, 0, 0),
+    legend.margin = margin(0, 0, 0, 0), 
+    plot.margin = margin(1, 1, 1, 1, "pt") # Minimal padding around panels
+  ) & 
+  labs(title = NULL)
+
+final_fig
+
+full_destination <- file.path(new_directory_path, "2DGOGvsCOGvsEAO.fullModel.jpg")
+
+ggsave(
+  filename = full_destination,
+  plot = final_fig, 
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,     
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+```
+
+# For write up, identify direction of EVO trend and check which years are significant
+
+Woillez et al. (2007; 2009)
+Citation: Woillez, M., et al. (2007). 
+Notes on aggregation indices for spatial distributions of fish populations. ICES Journal of Marine Science, 64(9), 1837–1841.
+Role: Establishes the foundational use of *CV* across time series of spatial indices (e.g., Area Occupied, Center of Gravity) to quantify population spatial stability versus environmental responsiveness.
+
+Thorson et al. (2016)
+Citation: Thorson, J. T., et al. (2016). 
+Model-based inference for estimating shifts in species distribution, area occupied and centre of gravity. Methods in Ecology and Evolution, 7(8), 990–1002.
+Role: Demonstrates evaluating interannual variance and relative fluctuation (*CV*) in model-based effective area/volume occupied across climate anomalies.
+
+Ciannelli et al. (2013)
+Citation: Ciannelli, L., et al. (2013). Spatial convergence and divergence in fish distributions. Ecography, 36(1), 108–118.
+Role: Uses *CV* of spatial indices to measure dynamic range expansion/contraction under density-dependent habitat selection.
+
+```{r, eao.analyses.additional.stats}
+
+# For understanding baseline and percent changes (gives direction)
+final_eao_summary <- final_eao %>%
+  mutate(
+    baseline = mean(est),
+    pct_change = ((est - baseline) / baseline) * 100,
+    pct_lwr    = ((lwr - baseline) / baseline) * 100,
+    pct_upr    = ((upr - baseline) / baseline) * 100
+  ) 
+
+View(final_eao_summary)
+
+fwrite(final_eao_summary, here(new_directory_path2, "effectiveareaoccupied.baselineModel_summary.csv"),
+       sep = ",")
+
+## For volatility by size and blob event
+cv_by_regime <- final_eao %>%
+  mutate(
+    regime = case_when(
+      Year < 2014 ~ "Pre-Blob",
+      Year %in% 2014:2016 ~ "Blob",
+      Year > 2016 ~ "Post-Blob"
+    )
+  ) %>%
+  group_by(regime) %>%
+  summarize(
+    mean_evo = mean(est),
+    sd_evo   = sd(est),
+    cv_evo   = (sd_evo / mean_evo) * 100,
+    .groups  = "drop"
+  )
+
+View(cv_by_regime)
+
+fwrite(cv_by_regime, here(new_directory_path2, "cv_by_regime.baselineModel.csv"),
+       sep = ",")
+
+```
+
+# Create area definitions
+
+Note that the min and max of the plot should have great spatial bound across all data sets and that this will likely change in the next iteration.
+
+```{r, define.OM.box.extents}
+
+#------------------------------------------------------------------------
+# Define full data boundaries
+#------------------------------------------------------------------------
+
+xmin = min(s2.grid.water$X*1000) 
+ymin =  min(s2.grid.water$Y*1000)     
+xmax = max(s2.grid.water$X*1000)
+ymax = max(s2.grid.water$Y*1000) 
+
+# Create data frame with dummy longitude = 0
+df <- data.frame(lon = -134.1163, lat = 42.5)
+
+# Convert to sf object (WGS84)
+sf_wgs84 <- st_as_sf(df, coords = c("lon", "lat"), crs = 4326)
+
+CapeBlanco <- sf_wgs84 %>% st_transform(crs = aea_custom)
+CapeBlanco.aea_custom <- CapeBlanco$geometry[[1]][2]
+#------------------------------------------------------------------------
+# For Northern Boundary (Cape Blanco, OR and above)
+#------------------------------------------------------------------------
+
+z1.bbox_coords <- c(xmin, CapeBlanco.aea_custom, xmax, ymax)
+names(z1.bbox_coords) = c("xmin","ymin","xmax","ymax")
+
+z1bbp <- st_as_sfc(st_bbox(z1.bbox_coords)) 
+st_crs(z1bbp) = aea_custom
+
+# Convert to m for intersection
+z1bbp <- st_sf(Area_id = "North",
+               geometry = z1bbp)
+
+#------------------------------------------------------------------------
+# For Southern Boundary (below Cape Blanco, OR)
+#------------------------------------------------------------------------
+
+z2.bbox_coords <- c(xmin, ymin, xmax, CapeBlanco.aea_custom)
+names(z2.bbox_coords) = c("xmin","ymin","xmax","ymax")
+
+z2bbp <- st_as_sfc(st_bbox(z2.bbox_coords)) 
+st_crs(z2bbp) = aea_custom
+
+st_bbox(z2bbp)
+
+# Convert to m for intersection
+z2bbp <- st_sf(Area_id = "South",
+               geometry = z2bbp)
+
+```
+
+## Check OM spatial layout
+
+This will give us an idea if the previous definitions are appropriate.
+
+```{r, plot.OM.box.extents}
+
+area.diams <-
+  ggplot() +
+  geom_sf(data = z1bbp, fill = "blue", col = "black", 
+          alpha = 0.5) +
+  geom_sf(data = z2bbp, fill = "lightgreen", col = "black", 
+          alpha = 0.5) +
+  # LAYER 1 & 2: LAND & STATES (Drawn FIRST in background)
+  geom_sf(data = PacificCoast.aea_custom, 
+          color = "#ae8f60", 
+          linewidth = 0.5, 
+          fill = "#E1C699") +
+  geom_sf(data = PCoastStates.aea_custom, 
+          color = "#ae8f60", 
+          linewidth = 0.5, 
+          fill = "#E1C699") +
+  geom_sf(data = Populated10.aea_custom, 
+          col = "black") +
+  geom_sf_text(data = Populated10.aea_custom,
+            aes(label = name), 
+               nudge_y = 50000,  # Offset text 40km north so it doesn't overlap the point
+               size = 3.5,
+               fontface = "bold"
+               ) +
+  # Remove added space on x-axis
+  scale_x_continuous(expand = c(0, 0)) +
+  labs(y = "Latitude",
+       x = "Longitude") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x = element_text(angle = 90))
+
+area.diams
+
+ggsave2(filename="Area.Definitions.jpeg", 
+        plot=area.diams,
+        path=here("Final.Figures"),
+        device = "jpeg", 
+        dpi = 1200, 
+        width = 45,   
+        height = 21, 
+        units = "cm", 
+        limitsize = FALSE
+        )
+
+```
+
+# Spatially overlay data and area definitions
+
+Note that ESIRI does not allow for DateTime and that this will need adjusted in the next step.
+
+## For northern area
+
+```{r, intersection.spatial.north.area.defs}
+
+range(s2.grid.water$Y)
+# [1] -952.847 1287.153
+
+# Check dimensions
+st_bbox(z1bbp)
+#      xmin      ymin      xmax      ymax 
+# -332021.3  323221.8  667978.7 1287153.0 
+
+# Subset the grid based on zone boundary (note we need to convert to km to match the model)
+NorthArea.grid <- s2.grid.water[s2.grid.water$Y > 323221.8/1000, ]
+
+range(NorthArea.grid$Y)
+# [1] 327.153 1287.153
+
+# Make predictions on the entire grid 
+Summer.pred.no.imputations.north <- 
+  predict(deltalognormal.loglink.reml, 
+          NorthArea.grid,
+          offset  = NorthArea.grid$LogArea,  # Manually supply the vector
+          return_tmb_object = TRUE)
+
+# Note unlike get_index_split() you use the prediction object and do not pass new data
+index.NorthArea <- get_index(Summer.pred.no.imputations.north, 
+                             bias_correct = TRUE, 
+                             level = 0.95,
+                             area = NorthArea.grid$cell_volume_m3_time_varyingMLD
+                             )
+
+# Save output
+fwrite(index.NorthArea, 
+       here(new_directory_path2,
+            "deltalognormal.loglink.reml.NorthArea.index.10km.csv"),
+       sep = ",")
+
+#------------------------------------------------------------------------
+# Plot index and confidence interval
+#------------------------------------------------------------------------
+
+NorthArea.index.95CI <-
+  ggplot() + 
+  geom_line(data = index.NorthArea,
+            aes(x= YearSeas.nm, y = est), color = "blue", 
+            linewidth = 1) +
+  geom_ribbon(data = index.NorthArea, 
+              aes(x= YearSeas.nm, ymin = lwr, ymax = upr), 
+              fill = "blue", alpha = 0.2) +
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  labs(title = "Annual abundance indices (kg) with 95 % confidence interval") +
+  theme_minimal(base_size = 18)
+
+NorthArea.index.95CI
+
+ggsave2(
+  filename="deltalognormal.loglink.reml.NorthArea.index.95CI.10km2.jpeg",
+  plot=NorthArea.index.95CI,
+        path=here("Final.Figures"),
+        device = "jpeg", 
+        dpi = 1200, 
+        width = 45,   
+        height = 21, 
+        units = "cm", 
+        limitsize = FALSE
+        )
+
+#------------------------------------------------------------------------
+# Check the range and values of se
+#------------------------------------------------------------------------
+
+summary(index.NorthArea$se)  
+
+#------------------------------------------------------------------------
+# Save output
+#------------------------------------------------------------------------
+
+# Adjust accordingly
+index.NorthArea.save.is.made = T
+
+if (index.NorthArea.save.is.made == F){
+  
+  index.NorthArea.save <- index.NorthArea %>%
+    mutate(Area = "North",
+           Year = substr(YearSeas.nm, 1,4),
+           Model = "finalBaseModel",
+           Method = "IntegrCanadianDatNoImpsNoCoVar.w.SptlEffSptlTempEff2008&2012-2024.10km.res",
+           Seas = "Summer",
+           Data = "DFO+NewNOAARepositoryData",
+           Error = "iid"
+           ) %>%
+    select(-YearSeas.nm)
+
+  fwrite(index.NorthArea.save, here("Final.Results", 
+                             "area.abundance.indices_FullBaseModel.ByArea.csv"), 
+         sep = ",", append = T)
+}
+
+#------------------------------------------------------------------------
+# Plot index with error bar confidence interval
+#------------------------------------------------------------------------
+
+NorthArea.index.95CI.with.errBar <-
+  ggplot() + 
+  geom_errorbar(data = index.NorthArea,
+                aes(x = YearSeas.nm, ymin = lwr, ymax = upr), 
+                color = "blue", linewidth = .75, width = 0.2) + 
+  geom_line(data = index.NorthArea, 
+             aes(x = YearSeas.nm, y = est), 
+             color = "black", linewidth = 1) +
+  geom_point(data = index.NorthArea, 
+             aes(x = YearSeas.nm, y = est), 
+             color = "black", size = 2, shape = 19) + 
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  theme_minimal(base_size = 18) +
+  labs(x = "Year", y = NULL) +
+  ggtitle("Northern biomass estimates with error bars and 95% confidence intervals")
+
+NorthArea.index.95CI.with.errBar
+
+ggsave2(
+  filename="deltalognormal.loglink.reml.NorthArea.index.95CI.w.errbar.10km2.jpeg",
+  plot=NorthArea.index.95CI.with.errBar,
+        path=here("Final.Figures"),
+        device = "jpeg", 
+        dpi = 1200, 
+        width = 45,   
+        height = 21, 
+        units = "cm", 
+        limitsize = FALSE
+        )
+
+```
+
+## For southern area
+
+```{r, intersection.spatial.south.defs}
+
+range(s2.grid.water$Y)
+# [1] -952.847 1287.153
+
+# Check dimensions
+st_bbox(z1bbp)
+#      xmin      ymin      xmax      ymax 
+# -332021.3  323221.8  667978.7 1287153.0 
+
+# Subset the grid based on zone boundary (note we need to convert to km to match the model)
+SouthArea.grid <- s2.grid.water[s2.grid.water$Y <= 323221.8/1000, ]
+
+range(SouthArea.grid$Y)
+# [1] -952.847  317.153
+
+# Make predictions on the entire grid 
+Summer.pred.no.imputations.south <- 
+  predict(deltalognormal.loglink.reml, 
+          SouthArea.grid,
+          offset  = SouthArea.grid$LogArea,  # Manually supply the vector
+          return_tmb_object = TRUE)
+
+# Note unlike get_index_split() you use the prediction object and do not pass new data
+index.SouthArea <- get_index(Summer.pred.no.imputations.south, 
+                             bias_correct = TRUE, 
+                             level = 0.95,
+                             area = SouthArea.grid$cell_volume_m3_time_varyingMLD
+                             )
+
+# Save output
+fwrite(index.SouthArea, 
+       here(new_directory_path2,
+            "deltalognormal.loglink.reml.SouthArea.index.10km.csv"),
+       sep = ",")
+
+#------------------------------------------------------------------------
+# Plot index and confidence interval
+#------------------------------------------------------------------------
+
+SouthArea.index.95CI <-
+  ggplot() + 
+  geom_line(data = index.SouthArea,
+            aes(x= YearSeas.nm, y = est), color = "blue", 
+            linewidth = 1) +
+  geom_ribbon(data = index.SouthArea, 
+              aes(x= YearSeas.nm, ymin = lwr, ymax = upr), 
+              fill = "blue", alpha = 0.2) +
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  labs(title = "Annual abundance indices (kg) with 95 % confidence interval") +
+  theme_minimal(base_size = 18)
+
+SouthArea.index.95CI
+
+ggsave2(
+  filename="deltalognormal.loglink.reml.index.95CI.10km2.jpeg",
+  plot=SouthArea.index.95CI,
+  path=here("Final.Figures"),
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,   
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+#------------------------------------------------------------------------
+# Check the range and values of se
+#------------------------------------------------------------------------
+
+summary(index.SouthArea$se)  
+
+#------------------------------------------------------------------------
+# Save output
+#------------------------------------------------------------------------
+
+# Adjust accordingly
+index.SouthArea.save.is.made = T
+
+if (index.SouthArea.save.is.made == F){
+  
+  index.SouthArea.save <- index.SouthArea %>%
+    mutate(Area = "South",
+           Year = substr(YearSeas.nm, 1,4),
+           Model = "finalBaseModel",
+           Method = "IntegrCanadianDatNoImpsNoCoVar.w.SptlEffSptlTempEff2008&2012-2024.10km.res",
+           Seas = "Summer",
+           Data = "DFO+NewNOAARepositoryData",
+           Error = "iid"
+           ) %>%
+    select(-YearSeas.nm)
+
+  fwrite(index.SouthArea.save, here("Final.Results", 
+                             "area.abundance.indices_FullBaseModel.ByArea.csv"), 
+         sep = ",", append = T)
+}
+
+#------------------------------------------------------------------------
+# Plot index with error bar confidence interval
+#------------------------------------------------------------------------
+
+SouthArea.index.95CI.with.errBar <-
+  ggplot() + 
+  geom_errorbar(data = index.SouthArea,
+                aes(x = YearSeas.nm, ymin = lwr, ymax = upr), 
+                color = "blue", linewidth = .75, width = 0.2) + 
+  geom_line(data = index.SouthArea, 
+             aes(x = YearSeas.nm, y = est), 
+             color = "black", linewidth = 1) +
+  geom_point(data = index.SouthArea, 
+             aes(x = YearSeas.nm, y = est), 
+             color = "black", size = 2, shape = 19) + 
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  theme_minimal(base_size = 18) +
+  labs(x = "Year", y = NULL) +
+  ggtitle("Southern biomass estimates with error bars and 95% confidence intervals")
+
+SouthArea.index.95CI.with.errBar
+
+ggsave2(
+  filename="deltalognormal.loglink.reml.SouthArea.index.95CI.w.errbar.10km2.jpeg",
+  plot=SouthArea.index.95CI.with.errBar,
+  path=here("Final.Figures"),
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,   
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+```
+
+# Put indices into a panel 
+
+```{r, abundance.indice.panel.before.correction}
+
+# -----------------------------------------------------------------------------
+# Combine Plots & Format for CJFAS
+# -----------------------------------------------------------------------------
+
+# Combine into a clean 2-column layout
+final_fig2 <- global.index.95CI.with.errBar + (NorthArea.index.95CI.with.errBar / SouthArea.index.95CI.with.errBar) + 
+  plot_layout(widths = c(1, 1)) +
+  plot_annotation(
+    tag_levels = 'a',
+    tag_prefix = '(',
+    tag_suffix = ')'
+  ) & 
+  theme(
+    plot.tag = element_text(face = "bold", size = 18),
+    legend.box.margin = margin(0, 0, 0, 0),
+    legend.margin = margin(0, 0, 0, 0), 
+    plot.margin = margin(1, 1, 1, 1, "pt") # Minimal padding around panels
+  ) & 
+  labs(title = NULL)
+
+final_fig2
+
+full_destination2 <- file.path(new_directory_path, "AbundanceIndices.fullModel.jpg")
+
+ggsave(
+  filename = full_destination2,
+  plot = final_fig2, 
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,     
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+```
+
+
+ 

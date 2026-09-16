@@ -1,0 +1,4608 @@
+---
+title: "Integrated.Canadian.dat.no.interpolation.fixed.years.drop.pre2008.and.2009-2011.model"
+author: "Stephanie Hopkins"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE
+    
+---
+
+```{r setup, include=FALSE}
+
+#-----------------------------------------------------------------
+# Run first if not already installed
+#-----------------------------------------------------------------
+
+#install.packages('remotes')
+#remotes::install_github("pbs-assess/sdmTMB", dependencies = TRUE)
+#remotes::install_github("pbs-assess/sdmTMBextra", dependencies = TRUE)
+
+
+#-----------------------------------------------------------------
+# If sdmTMBextra fails because of INLA install, use the following:
+#-----------------------------------------------------------------
+
+#remotes::install_version("INLA", version = "25.06.13",
+#repos = c(getOption("repos"), INLA = "https://inla.r-inla-download.org/R/testing"), dep = TRUE) 
+
+#-----------------------------------------------------------------
+# Begin setup
+#-----------------------------------------------------------------
+
+rm(list=ls())
+gc()
+
+load.lib <- c("tidyverse", "data.table", "cowplot", "sf", 
+              "here", "sdmTMB", "sdmTMBextra",
+              "future.apply", # required for running sdmTMB::sdmTMB_cv
+              "groupdata2", # allows for creation of stratified folds
+              "ggforce" # enables plot_anisotropy
+              ) 
+
+install.lib <- load.lib[!load.lib %in% installed.packages()]
+
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+
+sf_use_s2(TRUE)
+
+dir <- here(getwd())
+
+source(here(dir, "functions.R"))
+
+```
+
+# Load coastal shapefile and define projection
+
+```{r, ROMS.test}
+
+# Since the data falls within two UTM zones and there is not an ideal projection to use, apply a custom equal area Albers projection
+aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
+
+# High res coastal boundary from NOAA
+land.barrier <- read_sf(here(dir, "Data", "Shapefiles", "land.barrier.shp"))
+
+# Load YearSeason gaps to fill
+load(file = here(dir, "Data", "ExampleRun",
+                                    "est.missing.time2.rda"))
+
+```
+
+# Load YearSeason data (with MLD) and calculate density
+
+Note you will need to redefine the transect centres to get X and Y and that you need to adjust the data depending on whether a fixed 30m or mld is used.
+
+```{r, load.seasonal.data.mld}
+
+# Load new sdm data
+TwoSeas.dat <- fread(here(dir, "Data", 
+                           "mld.final_table_allHistoric.csv"))
+
+# Boxplot to check for "Empty" combinations and outliers
+lengthBinBoxPlot <-
+  ggplot(TwoSeas.dat %>%
+         filter(len.bin != "" & 
+                  !Year %in% c(2009:2011) &
+                  Year < 2021 & 
+                  Season == "Summer"), 
+       aes(x = as.factor(YearSeas), y = Bin_Haul_Biomass, fill = len.bin)) +
+  geom_boxplot(outlier.alpha = 0.5) +
+  scale_y_log10() + # Weights are usually log-normal
+  facet_wrap(~len.bin, scales = "free_y") +
+  labs(title = "Sardine Weight Distribution",
+       x = "Year/Season", 
+       y = "Total Weight (Log Scale)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90))
+
+ggsave2(filename = "lengthBinDataBoxPlot.jpeg",
+        plot = lengthBinBoxPlot, 
+        device ="jpeg",
+        path = here(dir, "Final.Figures"),
+        dpi = 1200, width = 29, height = 21,
+        unit = "cm", limitsize = FALSE)
+
+```
+
+
+```{r, create.transect.data}
+
+# Step 1: Aggregate your raw data per haul and per length bin
+survey_aggregated <- TwoSeas.dat %>%
+  mutate(len.bin = case_when(
+    len.bin == "" | is.na(len.bin) ~ "EMPTY",
+    len.bin == "200+"              ~ "200plus",
+    TRUE                           ~ as.character(len.bin)
+  )) %>%
+  mutate(merged.bin = case_when(
+    len.bin == "EMPTY"             ~ "EMPTY",
+    len.bin == "200plus"           ~ "200plus",
+    len.bin %in% c("150to200", "less150") ~ "less200",
+    TRUE                           ~ as.character(len.bin)
+  )) %>%
+  mutate(merged.bin2 = case_when(
+    len.bin == "EMPTY"             ~ "EMPTY",
+    len.bin == "less150"           ~ "less150",
+    len.bin %in% c("150to200", "less150") ~ "150plus",
+    TRUE                           ~ as.character(len.bin)
+  )) %>%
+  group_by(keys, Year, Season, Fin_sweep.m3, latBin, len.bin, merged.bin, 
+           merged.bin2, YearSeas, YearSeas.nm, mean_depth, start_latitude, 
+           start_longitude, stop_latitude, stop_longitude, Country) %>%
+  summarise(
+    Total_W = sum(Bin_Haul_Biomass, na.rm = TRUE),
+    Species_weight = first(Species_weight, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Step 2: Extract unique HAULS and their metadata
+unique_hauls_meta <- survey_aggregated %>%
+  group_by(keys, Year, Season, Country, latBin, YearSeas, YearSeas.nm) %>%
+  summarise(
+    Fin_sweep.m3    = first(Fin_sweep.m3, na.rm = TRUE),
+    mean_depth      = first(mean_depth, na.rm = TRUE),
+    start_latitude  = first(start_latitude, na.rm = TRUE),
+    start_longitude = first(start_longitude, na.rm = TRUE),
+    stop_latitude   = first(stop_latitude, na.rm = TRUE),
+    stop_longitude  = first(stop_longitude, na.rm = TRUE),
+    .groups = "drop"
+  ) 
+
+# Step 3: Define the valid structural pairs and cross them
+# This guarantees exactly 3 structured rows per haul instead of 6 impossible ones
+bin_mapping <- tibble(
+  len.bin    = c("less150", "150to200", "200plus"),
+  merged.bin = c("less200", "less200",  "200plus"),
+  merged.bin2 = c("less150", "150plus",  "150plus")
+  
+)
+
+master_grid_with_meta <- unique_hauls_meta %>%
+  crossing(bin_mapping) # Crosses the haul metadata with only the valid pairs
+
+# Step 4: Join the true catch weights back onto your master grid
+survey.transects.st.final <- master_grid_with_meta %>%
+  left_join(
+    survey_aggregated %>% 
+      filter(len.bin != "EMPTY") %>% 
+      # Isolate just the structural keys and the catch data
+      select(keys, len.bin, Total_W, Species_weight), 
+    by = c("keys", "len.bin")
+  ) %>%
+  mutate(
+    Total_W        = coalesce(Total_W, 0),
+    Species_weight = coalesce(Species_weight, 0),
+    FID            = keys,
+    len.bin        = as.factor(len.bin)
+  )
+
+# Note data will be in wgs84
+survey.transects3.sf <- 
+  make_transect_sf(survey.transects.st.final, crs = 4326) 
+
+survey.transects3.sf.clip <- survey.transects3.sf %>%
+  mutate(X = st_coordinates(st_centroid(.))[,1],
+         Y = st_coordinates(st_centroid(.))[,2]) %>%
+  filter(Y < 52)
+
+range(survey.transects3.sf.clip$Y)
+# [1] 31.3443 51.4088
+
+## Create X Y columns and extract polygon centers
+TwoSeas.dat4 <- survey.transects3.sf.clip %>%
+  # Project the data to Albers Conical Equal Area
+  st_transform(., crs = aea_custom) %>%
+  # Extract the centre of the transect (this is in km)
+  mutate(X = st_coordinates(st_centroid(.))[,1]/1000,
+         Y = st_coordinates(st_centroid(.))[,2]/1000) %>%
+  st_drop_geometry() 
+
+range(TwoSeas.dat4$X)
+# [1] -341.9713  668.1958
+
+range(TwoSeas.dat4$Y)
+# [1] -962.797 1287.434
+
+```
+
+# Split data by Season
+
+Note that there is no Canadian data for the spring.
+
+## For Season 2 define spatial boundaries
+
+```{r, sptl.boundaries2}
+
+# Filter the data frame
+data_for_3bin_model <- TwoSeas.dat4 %>%
+  filter(Season == "Summer" & !Year %in% c(2009:2011) &
+           # To be able to compare with ROMS
+           Year < 2021
+         ) 
+
+# Delineate spatial domain
+data_for_3bin_model <- 
+  data_for_3bin_model[data_for_3bin_model$X >= min(data_for_3bin_model$X) & 
+                 data_for_3bin_model$X <= max(data_for_3bin_model$X) & 
+                 data_for_3bin_model$Y >= min(data_for_3bin_model$Y) & 
+                 data_for_3bin_model$Y <= max(data_for_3bin_model$Y), ]
+
+# Function to test for values ending in .1
+integerFunction <- function(x) {
+  abs(x %% 1 - 0.1) < 1e-8
+}
+
+vals <- integerFunction(est.missing.time2) 
+
+# Apply the function to filter values ending in .1
+est.missing.time.S2 <- est.missing.time2[vals]
+est.missing.time.S2
+# [1] 2009.1 2010.1 2011.1 2020.1
+
+```
+
+# Group like gear configurations
+
+This is based on the literature and survey reports across the US and Canadian Survey segments. Each group used the same gear configuration and overall strategy, but may have more samples in some years than others. The general gear opening dimensions are also comparable within each group.
+
+```{r, gear.configs}
+
+data_for_3bin_model <- data_for_3bin_model %>%
+  mutate(GearConfig = case_when(
+    Country == "Canada" & Year < 2017 ~ "CADpre2017",
+    Country == "Canada" & Year == 2017 ~ "CAD2017",
+    Country == "Canada" & Year > 2017 ~ "CADpost2017",
+    Country == "USA" & Year < 2011 ~ "USApre2011",
+    Country == "USA" & Year >= 2011 & Year < 2015 ~ "USA2011-2014",
+    Country == "USA" & Year >= 2015 & Year < 2020 ~ "USApost2014"
+  ))
+
+```
+
+# Define offset
+
+```{r, Offsets}
+
+data_for_3bin_model <- data_for_3bin_model %>%
+  mutate(LogArea = log(Fin_sweep.m3),
+         LogArea30 = log(Fin_sweep.m3/30),
+         LogAreaMLD = log(Fin_sweep.m3/mean_depth)
+  )
+
+fwrite(data_for_3bin_model, 
+       here(dir, "Data", "data_for_3bin_model_w_zeros.csv"), 
+       sep = ","
+       )
+
+```
+
+# Define study plan
+
+General Steps:
+
+Step 1: The Foundation (Mesh & Barrier)
+
+- Because the base model without regard to length bin used a barrier mesh and 37.5 km minimum distance between nodes, as long at the matérn range is appropriate we will keep these assumptions here. If your Range is significantly larger than your 37.5 km cutoff (ideally the range should be at least 2–3x the cutoff), your mesh is fine. 
+
+Step 2: The Error Structure (Distribution)
+
+- Goal: Find which family (Gamma, Tweedie, LogNormal, etc.) best handles the postive catch only.
+- Method: Use the winner from Step 1 and the same Stratified Folds if available.
+- Note: Positive catches account for only 13% of the data and it may not be possible to use cross fold validation.
+
+Step 3: The Ecological Signal (Covariates)
+
+- Goal: Determine which environmental variables (temp, depth, etc.) actually improve predictions.
+- Method: Use the winner from Step 1 & 2 and the same Stratified Folds.
+- Selection: Use ELPD to see if adding a covariate actually adds "information" or just "noise."
+
+Step 4: The Robustness Check (Sensitivity Analysis)
+
+- Goal: Prove your results aren't just a fluke of the fold method.
+- Method: Take your Final "Best" Model and run it through Spatial Block Folds or Random Folds.
+- What you are looking for: If the model performs well in Stratified but terrible in Spatial Blocks, it means your model is good at "filling in gaps" but bad at "extrapolating." If it performs well in both, you have a very powerful, generalizable model.
+
+# Create folds (this is your most restrictive method)
+
+For comparing cross validation, the same folds as the global model need to be used!
+
+```{r, test.folds}
+
+# Load your fixed global dataset
+Season.2.dat.w.folds <- readRDS(here(dir, "Season.2.dat.w.folds.rds"))
+
+# Create a clean 1:1 lookup table
+master_fold_lookup <- Season.2.dat.w.folds %>%
+  select(keys, fold_id = .folds) %>%
+  distinct()
+
+```
+
+# Load Barrier Mesh with 42.5 km minimum distance
+
+Note this is from the full data base model output!
+
+```{r, load.barrier.mesh.mld.42.5km.dist}
+
+# 1. Load your "Full" mesh object (the one you saved)
+barrier2mld_42.5 <- readRDS(
+  file = here(dir, "Final.Results",
+              "barrier2mld_42.5.rds"))
+
+## If greater than >1,000–2,000 nodes, 
+## you’re likely in trouble unless you have a lot of RAM.
+length(barrier2mld_42.5$mesh$loc[,1])
+# [1] 176
+
+# Example plot code from ?add_barrier_mesh
+mesh_df_water_mld_42.5 <- 
+  barrier2mld_42.5$mesh_sf[barrier2mld_42.5$normal_triangles, ]
+mesh_df_land_mld_42.5 <- 
+  barrier2mld_42.5$mesh_sf[barrier2mld_42.5$barrier_triangles, ]
+
+Mesh.with.barrier_mld_42.5 <-
+ggplot() +
+  geom_sf(data = land.barrier) +
+  geom_sf(data = mesh_df_water_mld_42.5, size = 1, colour = "blue") +
+  geom_sf(data = mesh_df_land_mld_42.5, size = 1, colour = "green")
+
+Mesh.with.barrier_mld_42.5
+
+```
+
+# Summarise data for alternative length bin structures
+
+Note that for each catch weight grouping (global, 3 length bin, 2 length bin, etc.) you need to have a single entry per row. Comparisons will be made later based on predicted estimates of the cross validation output from the best models.
+
+## For three length bins
+
+These are: "less150", "150to200", and "200plus".
+
+```{r, ThreeLengthBinStructureSummary}
+
+ThreeLenBin.dat.w.folds <- data_for_3bin_model %>%
+  select(-c(merged.bin, merged.bin2)) %>%
+  left_join(master_fold_lookup, by = "keys") #%>%
+  #mutate(
+  #  # Micro-jitter the data so avoid instability introduced by three samples 
+  #  # per geographic coordinate
+  #  X_km = (X) + case_when(
+  #    len.bin == "less150"  ~ 0.001,  # Shifted 1 meter
+  #    len.bin == "150to200" ~ 0.002,  # Shifted 2 meters
+  #    len.bin == "200plus"  ~ 0.003   # Shifted 3 meters
+  #    )
+  #  )
+
+# 2. Update it for your Length Bin data (data_for_3bin_model.w.folds)
+# This keeps the exact same triangles/barrier but matches the 522 rows
+ThreeLenBinMesh <- sdmTMB::make_mesh(
+  data = ThreeLenBin.dat.w.folds, 
+  xy_cols = c("X", "Y"), 
+  mesh = barrier2mld_42.5$mesh # This "borrows" the physical structure of the old mesh
+)
+
+```
+
+### Fit three length bin models
+
+```{r, ThreeLengthBinModels}
+
+#------------------------------------------------------------------
+# Structure 1: Shared Spatial Field: A single spatial field 
+# common to all size classes (spatial = "on", no spatial_varying).
+#------------------------------------------------------------------
+
+# Length bin as covariate only
+deltalognormalLogArea.w.lengthBin.CoVar <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+## Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate only and MLD in offset
+deltalognormalLogArea.w.lengthBin.CoVar.MLD <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar.MLD <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 2: Independent Fields: Separate, independent spatial 
+# fields estimated for each length bin
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+deltalognormalLogArea.sptlVarying <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# MLD in offset
+deltalognormalLogArea.sptlVaryingMLD <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVaryingMLD <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 3: Shared Intercept + Reference Baseline (Isolated): 
+# The spatial field of the primary length bin  acts as a reference 
+# baseline, with  remaining fields modelled as spatial deviations
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. off)
+deltalognormalLogArea.sptlVarying.str3 <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 3) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str3 <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. off) MLD in offset
+deltalognormalLogArea.sptlVarying.str3.MLD <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str3.MLD <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 4: Shared Field + Baseline Reference Deviations (Nested): 
+# A global shared spatial field  plus spatial varying processes 
+# modelled as nested length-bin deviations
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. on)
+deltalognormalLogArea.sptlVarying.str4 <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str4 <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. on) MLD in offset
+deltalognormalLogArea.sptlVarying.str4.MLD <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str4.MLD <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ len.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Throws error:
+# Error in solve.default(h, g) : 
+#  system is computationally singular: reciprocal condition number = 2.04875e-25
+
+```
+
+### Create model decision table
+
+```{r, ThreeLenBinModelDecisions, message = FALSE, warning = FALSE, results = "hide"}
+
+# ====================================================================
+# 1. Define Helper Function
+# ====================================================================
+
+get_metrics <- function(objs, nm) {
+  suite_nm <- if(!is.null(objs$suite)) objs$suite else "Unassigned"
+  
+  if (is.null(objs$main) || is.null(objs$cv)) {
+    return(tibble(
+      Suite = suite_nm, Model = nm, `Total ELPD` = NA, 
+      `Main Sanity` = "Fit Error", `CV Sanity` = "Fit Error", `Folds Passed` = "0/5"
+    ))
+  }
+  
+  res <- try({
+    pointwise <- objs$cv$data$cv_loglik
+    folds <- objs$cv$fold_loglik
+    n_obs <- length(pointwise)
+    k_folds <- length(folds)
+    
+    pw_sd <- sd(pointwise, na.rm = TRUE)
+    pw_se <- sqrt(n_obs * var(pointwise, na.rm = TRUE))
+    fw_sd <- sd(folds, na.rm = TRUE)
+    fw_se <- sqrt(k_folds * var(folds, na.rm = TRUE))
+    
+    main_s <- all(unlist(sdmTMB::sanity(objs$main)))
+    fold_checks <- map_lgl(objs$cv$models, ~ all(unlist(sdmTMB::sanity(.x))))
+    
+    tibble(
+      Suite = suite_nm,
+      Model = nm,
+      `Total ELPD` = objs$cv$sum_loglik,
+      `PW SD` = round(pw_sd, 3), `PW SE` = round(pw_se, 2),
+      `FW SD` = round(fw_sd, 2), `FW SE` = round(fw_se, 2),
+      `Main Sanity` = if(main_s) "Pass" else "Fail",
+      `CV Sanity` = if(all(fold_checks)) "OK" else "! Warning",
+      `Folds Passed` = paste0(sum(fold_checks), "/", k_folds)
+    )
+  }, silent = TRUE)
+  
+  if (inherits(res, "try-error")) {
+    return(tibble(Suite = suite_nm, Model = nm, `Main Sanity` = "Extract Error"))
+  }
+  return(res)
+}
+
+# ====================================================================
+# 2. Run the Loop to Collect Data
+# ====================================================================
+
+Initial.model.selection.is.made = T
+ 
+if (!Initial.model.selection.is.made) {
+  
+  all_results <- list(
+    # Structure 1: Shared spatial field
+    "Structure 1: Lognormal + LengthBin: Log-link w/spl on" = 
+      list(main = deltalognormalLogArea.w.lengthBin.CoVar, 
+           cv = cv_deltalognormalLogArea.w.lengthBin.CoVar,
+           suite = "1. LengthBin Combination"),
+    "Structure 1: Lognormal + LengthBin: Log-link w/spl on + Offset w/MLD" =
+      list(main = deltalognormalLogArea.w.lengthBin.CoVar.MLD, 
+           cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.MLD,
+           suite = "1. LengthBin Combination"),
+    
+    # Structure 2: Independent fields / No shared field
+    "Structure 2: Lognormal + LengthBin (~ 0 + LengthBin spatial_varying w/spl off)" = 
+      list(main = deltalognormalLogArea.sptlVarying, 
+           cv = cv_deltalognormalLogArea.sptlVarying,
+           suite = "1. LengthBin Combination"),
+    "Structure 2: Lognormal + LengthBin (~ 0 + LengthBin spatial_varying w/sptl off) + Offset w/MLD" =
+      list(main = deltalognormalLogArea.sptlVaryingMLD, 
+           cv = cv_deltalognormalLogArea.sptlVaryingMLD,
+           suite = "1. LengthBin Combination"),
+    
+     # Structure 3: Shared intercept + Reference baseline field (Isolated)
+    "Structure 3: Lognormal + LengthBin (~ LengthBin spatial_varying w/spl off)" = 
+      list(main = deltalognormalLogArea.sptlVarying.str3, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str3,
+           suite = "1. LengthBin Combination"),
+    "Structure 3: Lognormal + LengthBin (~ LengthBin spatial_varying w/spl off) + Offset w/MLD" = 
+      list(main = deltalognormalLogArea.sptlVarying.str3.MLD, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str3.MLD,
+           suite = "1. LengthBin Combination"),
+    
+    # Structure 4: Shared intercept + Reference baseline field (Nested)
+    "Structure 4: Lognormal + LengthBin (~ LengthBin spatial_varying w/sptl on)" = 
+      list(main = deltalognormalLogArea.sptlVarying.str4, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str4,
+           suite = "1. LengthBin Combination"),
+    "Structure 4: Lognormal + LengthBin (~ LengthBin spatial_varying w/sptl on) + Offset w/MLD" = 
+      list(main = deltalognormalLogArea.sptlVarying.str4.MLD, 
+           cv = NULL,
+           suite = "1. LengthBin Combination")
+    )
+  
+  # Step A: Combine raw metrics into one dataframe
+  summary_df <- imap_dfr(all_results, ~get_metrics(.x, .y))
+  
+  # ====================================================================
+  # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
+  # ====================================================================
+  
+  model_decision_table <- summary_df %>%
+    # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
+    select(
+      Suite, Model, 
+      `Main Sanity`, `CV Sanity`, `Folds Passed`, 
+      `Total ELPD`, 
+      everything() 
+    ) %>%
+    
+    # Calculate relative DELTA ELPD grouped by Suite
+    group_by(Suite) %>%
+    mutate(
+      # Condition: Row must pass both sanity tests and have valid ELPD data
+      is_valid_baseline = `Main Sanity` == "Pass" & 
+                          `CV Sanity` == "OK" & 
+                          !is.na(`Total ELPD`),
+      
+      # FIX: Target the HIGHEST (most positive/best fit) ELPD among passing models
+      baseline_elpd = if(any(is_valid_baseline)) {
+        max(`Total ELPD`[is_valid_baseline], na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+      
+      # Compute Delta (The top model outputs 0, inferior models output negative values)
+      `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
+    ) %>%
+    ungroup() %>%
+    
+    # Drop calculation columns and position DELTA ELPD next to Total ELPD
+    select(-is_valid_baseline, -baseline_elpd) %>%
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    
+    # Sorting: Sort by Suite, then arrange by Delta descending 
+    # This places your 0-valued best model at the top of each suite.
+    arrange(Suite, desc(`DELTA ELPD`))
+
+  # Print final corrected table
+  print(model_decision_table)
+}
+
+# View(model_decision_table)
+
+```
+
+### Re-run best model with REML
+
+```{r, REML.3LengthBins}
+
+#-----------------------------------------------------------
+# Structure 1: Shared Spatial Field: A single spatial field 
+# common to all size classes (spatial = "on", no spatial_varying).
+#-----------------------------------------------------------
+
+# Length bin as covariate only
+deltalognormalLogArea.w.lengthBin.CoVar.reml <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+## Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar.reml <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + len.bin,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+```
+
+### Update model selection table
+
+```{r, ThreeLenBinModelDecisions.update, message = FALSE, warning = FALSE, results = "hide"}
+
+Initial.model.selection.reml.is.made = T
+
+if (Initial.model.selection.reml.is.made == F){
+  # Add the new model to the list
+  all_results[["Lognormal + LengthBin: Log-link w/spl on and w/o REML (From Suite 1)"]] <- 
+    list(main = deltalognormalLogArea.w.lengthBin.CoVar, 
+         cv = cv_deltalognormalLogArea.w.lengthBin.CoVar,
+         suite = "2. Restricted Maximum Likelihood (REML) Estimation")
+ all_results[["Lognormal + LengthBin: Log-link w/spl on and w/ REML"]] <- 
+    list(main = deltalognormalLogArea.w.lengthBin.CoVar.reml, 
+         cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.reml, 
+         suite = "2. Restricted Maximum Likelihood (REML) Estimation")
+ 
+  # Step A: Combine raw metrics into one dataframe
+  summary_df <- imap_dfr(all_results, ~get_metrics(.x, .y))
+  
+  # ====================================================================
+  # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
+  # ====================================================================
+  
+  model_decision_table <- summary_df %>%
+    # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
+    select(
+      Suite, Model, 
+      `Main Sanity`, `CV Sanity`, `Folds Passed`, 
+      `Total ELPD`, 
+      everything() 
+    ) %>%
+    
+    # Calculate relative DELTA ELPD grouped by Suite
+    group_by(Suite) %>%
+    mutate(
+      # Condition: Row must pass both sanity tests and have valid ELPD data
+      is_valid_baseline = `Main Sanity` == "Pass" & 
+                          `CV Sanity` == "OK" & 
+                          !is.na(`Total ELPD`),
+      
+      # FIX: Target the HIGHEST (most positive/best fit) ELPD among passing models
+      baseline_elpd = if(any(is_valid_baseline)) {
+        max(`Total ELPD`[is_valid_baseline], na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+      
+      # Compute Delta (The top model outputs 0, inferior models output negative values)
+      `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
+    ) %>%
+    ungroup() %>%
+    
+    # Drop calculation columns and position DELTA ELPD next to Total ELPD
+    select(-is_valid_baseline, -baseline_elpd) %>%
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    
+    # Sorting: Sort by Suite, then arrange by Delta descending 
+    # This places your 0-valued best model at the top of each suite.
+    arrange(Suite, desc(`DELTA ELPD`))
+
+  # Print final corrected table
+  print(model_decision_table)
+}
+
+```
+
+### Use DHARMa to test goodness of fit on best model
+
+1) Check if the spatial random field has correctly accounted for spatial correlation.
+2) Check if delta/hurdle models in sdmTMB are properly handling zero-inflation.
+3) Visualize if a more complex model (*e.g.*, adding AR1 spatiotemporal fields) significantly improves the residuals compared to a simpler model. 
+
+```{r, DHARMa.check}
+
+set.seed(27)
+# 2. Generate simulation-based residuals (recommended approach)
+sim <- simulate(deltalognormalLogArea.w.lengthBin.CoVar.reml, nsim = 500, type = "mle-mvn")
+r_fit <- dharma_residuals(sim, deltalognormalLogArea.w.lengthBin.CoVar.reml, 
+                          return_DHARMa = TRUE)
+
+# 3. Use DHARMa functions to plot and test
+plot(r_fit)
+
+DHARMa::testResiduals(r_fit)
+# $uniformity                                                 
+# 
+# 	Asymptotic one-sample Kolmogorov-Smirnov test
+# 
+# data:  simulationOutput$scaledResiduals
+# D = 0.0080182, p-value = 0.6432
+# alternative hypothesis: two-sided
+# 
+# 
+# $dispersion
+# 
+# 	DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
+# 
+# data:  simulationOutput
+# dispersion = 0.021929, p-value = 0.208
+# alternative hypothesis: two.sided
+# 
+# 
+# $outliers
+# 
+# 	DHARMa outlier test based on exact binomial test with approximate expectations
+# 
+# data:  simulationOutput
+# outliers at both margin(s) = 31, observations = 8529, p-value = 0.6677
+# alternative hypothesis: true probability of success is not equal to 0.003992016
+# 95 percent confidence interval:
+#  0.002470869 0.005155173
+# sample estimates:
+# frequency of outliers (expected: 0.00399201596806387 ) 
+#                                            0.003634658
+
+ThreeLenBin.dat.w.folds$resids <- r_fit$scaledResiduals # from dharma_residuals
+ggplot(ThreeLenBin.dat.w.folds, aes(X, Y, color = resids)) + 
+  geom_point() + 
+    scale_colour_gradient2(low = "blue", mid = "grey", high = "red",
+                           midpoint = 0.5)
+
+DHARMa::testZeroInflation(r_fit)
+# DHARMa zero-inflation test via comparison to expected zeros with simulation
+### under H0 = fitted model
+##  data:  simulationOutput
+##  ratioObsSim = 1.0034, p-value = 0.252
+##  alternative hypothesis: two.sided
+
+# Test spatial autocorrelation 
+## 1. Recalculate to group by location
+r_aggr <- DHARMa::recalculateResiduals(r_fit, 
+                                       group = interaction(ThreeLenBin.dat.w.folds$X,
+                                                           ThreeLenBin.dat.w.folds$Y))
+## 2. Get the unique coordinates that match the aggregated residuals
+coords_unique <- ThreeLenBin.dat.w.folds %>%
+  group_by(X, Y) %>%
+  summarize(.groups = "drop")
+## 3. Run the test
+DHARMa::testSpatialAutocorrelation(r_aggr, 
+                                   x = coords_unique$X, 
+                                   y = coords_unique$Y)
+### DHARMa Moran's I test for distance-based autocorrelation
+##  data:  r_aggr
+##  observed = 0.00095333, expected = -0.00066622, sd = 0.00382219, p-value = 0.6718
+##  alternative hypothesis: Distance-based autocorrelation
+
+```
+
+### Save best models
+
+```{r, save.models}
+
+# Save the model selection table
+fwrite(model_decision_table, 
+       here(dir, "Final.Results", "Model.decision.table.3LenBins.csv"), 
+       sep = ",")
+
+# Save the final model
+saveRDS(deltalognormalLogArea.w.lengthBin.CoVar.reml, 
+        file = here(dir, "Final.Results",
+                    "S2.fit.3LenBin.model.reml.rds"))
+
+# Save the cross validation output
+saveRDS(cv_deltalognormalLogArea.w.lengthBin.CoVar.reml, 
+        file = here(dir, "Final.Results",
+                    "S2.fit.3LenBin.model.reml.cv.rds"))
+
+# Extract Coeffs and Confidence Intervals
+deltalognormalLogArea.w.lengthBin.CoVar.reml.summary <- tidy(cv_deltalognormalLogArea.w.lengthBin.CoVar.reml)
+
+fwrite(deltalognormalLogArea.w.lengthBin.CoVar.reml.summary, 
+       here(dir, "Final.Results",
+            "S2.fit.3LenBin.model.reml.cv.cis.csv"))
+
+# Extract Coeffs and Confidence Intervals
+deltalognormalLogArea.w.lengthBin.CoVar.reml.optisummary <- tidy(deltalognormalLogArea.w.lengthBin.CoVar.reml)
+
+fwrite(deltalognormalLogArea.w.lengthBin.CoVar.reml.optisummary, 
+       here(dir, "Final.Results",
+            "S2.fit.3LenBin.model.reml.opti.cis.csv"))
+
+```
+
+### For summary check
+
+Null Model (M0): Total_W ~ 1 (No random effects, no fixed effects).
+
+```{r, null.deviance}
+
+# 0. Null Model
+# Absolute Null: Baseline variance of the data
+m0 <- sdmTMB(
+  Total_W ~ 1,
+  data = ThreeLenBin.dat.w.folds, 
+  family = delta_lognormal(type = "standard"), 
+  mesh = ThreeLenBinMesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = NULL,    
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "off",
+  spatial = "off",
+  reml = FALSE,
+  anisotropy = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_idx",
+  silent = TRUE
+)
+
+sanity(m0)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed Effects Only (M1): Total_W ~ YearSeas.nm (No spatial/spatiotemporal engines).
+
+```{r, deviance.explained.by.fixed.effects}
+
+# 1. FIXED EFFECTS ALONE
+# (YearSeas + len.bin)
+m1_fixed <- update(m0, 
+                   formula = Total_W ~ as.factor(YearSeas.nm) + len.bin,
+                   #time = NULL,    
+                   # Use "ar1" or "rw" if you expect temporal autocorrelation
+                   # Otherwise, use default "iid" (independent by time step)
+                   #spatiotemporal = "off",
+                   reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m1_fixed)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed + Spatial Random Effects
+
+```{r, deviance.explained.by.fixed.plus.spatial.random.effects}
+
+# 2. SPATIALLY VARYING COMPONENT ALONE 
+# (This adds the 'spatial' engine to the fixed effects)
+m2_sv <- update(m1_fixed, 
+                formula = Total_W ~ as.factor(YearSeas.nm) + len.bin,
+                time = NULL,   
+                # Use "ar1" or "rw" if you expect temporal autocorrelation
+                # Otherwise, use default "iid" (independent by time step)
+                spatiotemporal = "off",
+                spatial = "on",
+                reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m2_sv)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+The Full Model (M3): Add spatiotemporal = "iid".
+
+```{r, deviance.explained.by.fixed.plus.spatial.random.plus.spatiotemporal.effects}
+
+# 3. SPATIOTEMPORAL COMPONENT ALONE
+# (The full model including random ST fields)
+m3_full <- update(m2_sv,
+                  formula = Total_W ~ as.factor(YearSeas.nm) + len.bin,
+                  time = "YearSeas.nm",               
+                  spatiotemporal = "iid", 
+                  reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m3_full)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+--- THE MATH ---
+
+```{r, deviance.explained.by.component}
+
+d0 <- deviance(m0)
+d1 <- deviance(m1_fixed)
+d2 <- deviance(m2_sv)
+d3 <- deviance(m3_full)
+
+# Percentages of total deviance explained by each:
+pct_full_model <- 1 - d3 / d0
+pct_fixed_only <- (d0 - d1) / d0
+pct_sv_only    <- (d1 - d2) / d0
+pct_st_only    <- (d2 - d3) / d0
+
+pct_full_model*100
+# [1] 46.16033
+
+pct_fixed_only*100
+# [1] 19.38272
+
+pct_sv_only*100
+# [1] 13.55001
+
+pct_st_only*100
+# [1] 13.2276
+
+```
+
+## For two length bins (supra large and smaller)
+
+These are: "less200" and "200plus".
+
+```{r, TwoLengthBin200StructureSummary}
+
+TwoLenBin200.dat.w.folds <- data_for_3bin_model %>%
+  select(-c(len.bin, merged.bin2)) %>%
+  left_join(master_fold_lookup, by = "keys") %>%
+  distinct() %>%
+  mutate(merged.bin = as.factor(merged.bin))
+
+# 2. Update it for your Length Bin data (data_for_3bin_model.w.folds)
+# This keeps the exact same triangles/barrier but matches the 522 rows
+TwoLenBin200Mesh <- sdmTMB::make_mesh(
+  data = TwoLenBin200.dat.w.folds, 
+  xy_cols = c("X", "Y"), 
+  mesh = barrier2mld_42.5$mesh # This "borrows" the physical structure of the old mesh
+)
+
+```
+
+### Fit two length bin models (200 mm cutoff)
+
+```{r, TwoLengthBin.200Models}
+
+#-----------------------------------------------------------
+# Structure 1: Shared Spatial Field: A single spatial field 
+# common to all size classes (spatial = "on", no spatial_varying).
+#-----------------------------------------------------------
+
+# Length bin as covariate only
+deltalognormalLogArea.w.lengthBin.CoVar.200Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+## Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate only and MLD in offset
+deltalognormalLogArea.w.lengthBin.CoVar.MLD.200Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar.MLD.200Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 2: Independent Fields: Separate, independent spatial 
+# fields estimated for each length bin
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+deltalognormalLogArea.sptlVarying.200Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.200Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# MLD in offset
+deltalognormalLogArea.sptlVaryingMLD.200Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVaryingMLD.200Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 3: Shared Intercept + Reference Baseline (Isolated): 
+# The spatial field of the primary length bin  acts as a reference 
+# baseline, with  remaining fields modelled as spatial deviations
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. off)
+deltalognormalLogArea.sptlVarying.str3.200Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 3) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str3.200Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. off) MLD in offset
+deltalognormalLogArea.sptlVarying.str3.MLD.200Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str3.MLD.200Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 4: Shared Field + Baseline Reference Deviations (Nested): 
+# A global shared spatial field  plus spatial varying processes 
+# modelled as nested length-bin deviations
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. on)
+deltalognormalLogArea.sptlVarying.str4.200Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str4.200Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. on) MLD in offset
+deltalognormalLogArea.sptlVarying.str4.MLD.200Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str4.MLD.200Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+```
+
+### Create model decision table for two length bin model with 200 cut off
+
+```{r, 200LenBinModelDecisions, message = FALSE, warning = FALSE, results = "hide"}
+
+# ====================================================================
+# 1. Define Helper Function
+# ====================================================================
+
+get_metrics <- function(objs, nm) {
+  suite_nm <- if(!is.null(objs$suite)) objs$suite else "Unassigned"
+  
+  if (is.null(objs$main) || is.null(objs$cv)) {
+    return(tibble(
+      Suite = suite_nm, Model = nm, `Total ELPD` = NA, 
+      `Main Sanity` = "Fit Error", `CV Sanity` = "Fit Error", `Folds Passed` = "0/5"
+    ))
+  }
+  
+  res <- try({
+    pointwise <- objs$cv$data$cv_loglik
+    folds <- objs$cv$fold_loglik
+    n_obs <- length(pointwise)
+    k_folds <- length(folds)
+    
+    pw_sd <- sd(pointwise, na.rm = TRUE)
+    pw_se <- sqrt(n_obs * var(pointwise, na.rm = TRUE))
+    fw_sd <- sd(folds, na.rm = TRUE)
+    fw_se <- sqrt(k_folds * var(folds, na.rm = TRUE))
+    
+    main_s <- all(unlist(sdmTMB::sanity(objs$main)))
+    fold_checks <- map_lgl(objs$cv$models, ~ all(unlist(sdmTMB::sanity(.x))))
+    
+    tibble(
+      Suite = suite_nm,
+      Model = nm,
+      `Total ELPD` = objs$cv$sum_loglik,
+      `PW SD` = round(pw_sd, 3), `PW SE` = round(pw_se, 2),
+      `FW SD` = round(fw_sd, 2), `FW SE` = round(fw_se, 2),
+      `Main Sanity` = if(main_s) "Pass" else "Fail",
+      `CV Sanity` = if(all(fold_checks)) "OK" else "! Warning",
+      `Folds Passed` = paste0(sum(fold_checks), "/", k_folds)
+    )
+  }, silent = TRUE)
+  
+  if (inherits(res, "try-error")) {
+    return(tibble(Suite = suite_nm, Model = nm, `Main Sanity` = "Extract Error"))
+  }
+  return(res)
+}
+
+# ====================================================================
+# 2. Run the Loop to Collect Data
+# ====================================================================
+
+Initial.200model.selection.is.made = T
+ 
+if (!Initial.200model.selection.is.made) {
+  
+  
+  all_results.200Models <- list(
+    # Structure 1: Shared spatial field
+    "Structure 1: Lognormal + LengthBin: Log-link w/spl on" = 
+      list(main = deltalognormalLogArea.w.lengthBin.CoVar.200Models, 
+           cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models,
+           suite = "1. LengthBin Combination"),
+    "Structure 1: Lognormal + LengthBin: Log-link w/spl on + Offset w/MLD" = 
+      list(main = deltalognormalLogArea.w.lengthBin.CoVar.MLD.200Models, 
+           cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.MLD.200Models,
+           suite = "1. LengthBin Combination"),
+    
+    # Structure 2: Independent fields / No shared field
+    "Structure 2: Lognormal + LengthBin (~ 0 + LengthBin spatial_varying w/spl off)" = 
+      list(main = deltalognormalLogArea.sptlVarying.200Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.200Models,
+           suite = "1. LengthBin Combination"),
+    "Structure 2: Lognormal + LengthBin (~ 0 + LengthBin spatial_varying w/sptl off) + Offset w/MLD" =
+      list(main = deltalognormalLogArea.sptlVaryingMLD.200Models, 
+           cv = cv_deltalognormalLogArea.sptlVaryingMLD.200Models,
+           suite = "1. LengthBin Combination"),
+    
+    # Structure 3: Shared intercept + Reference baseline field (Isolated)
+    "Structure 3: Lognormal + LengthBin (~ LengthBin spatial_varying w/spl off)" = 
+      list(main = deltalognormalLogArea.sptlVarying.str3.200Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str3.200Models,
+           suite = "1. LengthBin Combination"),
+    "Structure 3: Lognormal + LengthBin (~ LengthBin spatial_varying w/sptl off) + Offset w/MLD" = 
+      list(main = deltalognormalLogArea.sptlVarying.str3.MLD.200Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str3.MLD.200Models,
+           suite = "1. LengthBin Combination"),
+    
+    # Structure 4: Shared intercept + Reference baseline field (Nested)
+    "Structure 4: Lognormal + LengthBin (~ LengthBin spatial_varying w/sptl on)" = 
+      list(main = deltalognormalLogArea.sptlVarying.str4.200Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str4.200Models,
+           suite = "1. LengthBin Combination"),
+    "Structure 4: Lognormal + LengthBin (~ LengthBin spatial_varying w/sptl on) + Offset w/MLD" = 
+      list(main = deltalognormalLogArea.sptlVarying.str4.MLD.200Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str4.MLD.200Models,
+           suite = "1. LengthBin Combination")
+  )
+  
+  # Step A: Combine raw metrics into one dataframe
+  summary_df.200Models <- imap_dfr(all_results.200Models, ~get_metrics(.x, .y))
+  
+  # ====================================================================
+  # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
+  # ====================================================================
+  
+  model_decision_table.200Models <- summary_df.200Models %>%
+    # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
+    select(
+      Suite, Model, 
+      `Main Sanity`, `CV Sanity`, `Folds Passed`, 
+      `Total ELPD`, 
+      everything() 
+    ) %>%
+    
+    # Calculate relative DELTA ELPD grouped by Suite
+    group_by(Suite) %>%
+    mutate(
+      # Condition: Row must pass both sanity tests and have valid ELPD data
+      is_valid_baseline = `Main Sanity` == "Pass" & 
+                          `CV Sanity` == "OK" & 
+                          !is.na(`Total ELPD`),
+      
+      # FIX: Target the HIGHEST (most positive/best fit) ELPD among passing models
+      baseline_elpd = if(any(is_valid_baseline)) {
+        max(`Total ELPD`[is_valid_baseline], na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+      
+      # Compute Delta (The top model outputs 0, inferior models output negative values)
+      `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
+    ) %>%
+    ungroup() %>%
+    
+    # Drop calculation columns and position DELTA ELPD next to Total ELPD
+    select(-is_valid_baseline, -baseline_elpd) %>%
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    
+    # Sorting: Sort by Suite, then arrange by Delta descending 
+    # This places your 0-valued best model at the top of each suite.
+    arrange(Suite, desc(`DELTA ELPD`))
+
+  # Print final corrected table
+  print(model_decision_table.200Models)
+}
+
+```
+
+### Re-run best model with REML
+
+```{r, REML.200plus}
+
+#----------------------------------------------------------
+# Length bin as covariate only
+#----------------------------------------------------------
+
+deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+## Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+```
+
+### Update model selection table
+
+```{r, 200LenBinModelDecisions.update, message = FALSE, warning = FALSE, results = "hide"}
+
+Initial.200model.selection.reml.is.made = T
+
+if (Initial.200model.selection.reml.is.made == F){
+  # Add the new model to the list
+  all_results.200Models[["Lognormal + LengthBin: Log-link w/spl on and w/o REML (From Suite 1)"]] <- 
+    list(main = deltalognormalLogArea.w.lengthBin.CoVar.200Models, 
+         cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models,
+         suite = "2. Restricted Maximum Likelihood (REML) Estimation")
+ all_results.200Models[["Lognormal + LengthBin: Log-link w/spl on and w/ REML"]] <- 
+    list(main = deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml, 
+         cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml, 
+         suite = "2. Restricted Maximum Likelihood (REML) Estimation")
+ 
+  # Step A: Combine raw metrics into one dataframe
+  summary_df.200Models <- imap_dfr(all_results.200Models, ~get_metrics(.x, .y))
+  
+  # ====================================================================
+  # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
+  # ====================================================================
+  
+  model_decision_table.200Models <- summary_df.200Models %>%
+    # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
+    select(
+      Suite, Model, 
+      `Main Sanity`, `CV Sanity`, `Folds Passed`, 
+      `Total ELPD`, 
+      everything() 
+    ) %>%
+    
+    # Calculate relative DELTA ELPD grouped by Suite
+    group_by(Suite) %>%
+    mutate(
+      # Condition: Row must pass both sanity tests and have valid ELPD data
+      is_valid_baseline = `Main Sanity` == "Pass" & 
+                          `CV Sanity` == "OK" & 
+                          !is.na(`Total ELPD`),
+      
+      # FIX: Target the HIGHEST (most positive/best fit) ELPD among passing models
+      baseline_elpd = if(any(is_valid_baseline)) {
+        max(`Total ELPD`[is_valid_baseline], na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+      
+      # Compute Delta (The top model outputs 0, inferior models output negative values)
+      `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
+    ) %>%
+    ungroup() %>%
+    
+    # Drop calculation columns and position DELTA ELPD next to Total ELPD
+    select(-is_valid_baseline, -baseline_elpd) %>%
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    
+    # Sorting: Sort by Suite, then arrange by Delta descending 
+    # This places your 0-valued best model at the top of each suite.
+    arrange(Suite, desc(`DELTA ELPD`))
+
+  # Print final corrected table
+  print(model_decision_table.200Models)
+}
+
+```
+
+### Use DHARMa to test goodness of fit on best two length bin model with 200 cut off without spatial varying effects
+
+Note this is the best model overall, which had no spatial varying effects. The name is misleading.
+
+1) Check if the spatial random field has correctly accounted for spatial correlation.
+2) Check if delta/hurdle models in sdmTMB are properly handling zero-inflation.
+3) Visualize if a more complex model (*e.g.*, adding AR1 spatiotemporal fields) significantly improves the residuals compared to a simpler model. 
+
+```{r, DHARMa.check200plus}
+
+set.seed(27)
+
+# 2. Generate simulation-based residuals (recommended approach)
+sim.200Models <- simulate(deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml, nsim = 500, type = "mle-mvn")
+
+r_fit.200Models <- 
+  dharma_residuals(sim.200Models, deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml, return_DHARMa = TRUE)
+
+# 3. Use DHARMa functions to plot and test
+plot(r_fit.200Models)
+
+DHARMa::testResiduals(r_fit.200Models)
+# $uniformity                                                 
+# 
+# 	Asymptotic one-sample Kolmogorov-Smirnov test
+# 
+# data:  simulationOutput$scaledResiduals
+# D = 0.0070058, p-value = 0.9333
+# alternative hypothesis: two-sided
+# 
+# 
+# $dispersion
+# 
+# 	DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
+# 
+# data:  simulationOutput
+# dispersion = 0.0016725, p-value = 0.048
+# alternative hypothesis: two.sided
+# 
+# 
+# $outliers
+# 
+# 	DHARMa outlier test based on exact binomial test with approximate expectations
+# 
+# data:  simulationOutput
+# outliers at both margin(s) = 14, observations = 5923, p-value = 0.04915
+# alternative hypothesis: true probability of success is not equal to 0.003992016
+# 95 percent confidence interval:
+#  0.001292822 0.003962655
+# sample estimates:
+# frequency of outliers (expected: 0.00399201596806387 ) 
+#                                            0.002363667  
+
+TwoLenBin200.dat.w.folds$resids <- r_fit.200Models$scaledResiduals # from dharma_residuals
+ggplot(TwoLenBin200.dat.w.folds, aes(X, Y, color = resids)) + 
+  geom_point() + 
+    scale_colour_gradient2(low = "blue", mid = "grey", high = "red",
+                           midpoint = 0.5)
+
+DHARMa::testZeroInflation(r_fit.200Models)
+# DHARMa zero-inflation test via comparison to expected zeros with simulation
+### under H0 = fitted model
+##  data:  simulationOutput
+##  ratioObsSim = 1.0017, p-value = 0.668
+##  alternative hypothesis: two.sided
+
+# Test spatial autocorrelation 
+## 1. Recalculate to group by location
+r_aggr.200Models <- DHARMa::recalculateResiduals(r_fit.200Models, 
+                                                group = interaction(TwoLenBin200.dat.w.folds$X,
+                                                                    TwoLenBin200.dat.w.folds$Y))
+## 2. Get the unique coordinates that match the aggregated residuals
+coords_unique.200Models <- TwoLenBin200.dat.w.folds %>%
+  group_by(X, Y) %>%
+  summarize(.groups = "drop")
+
+## 3. Run the test
+DHARMa::testSpatialAutocorrelation(r_aggr.200Models, 
+                                   x = coords_unique.200Models$X, 
+                                   y = coords_unique.200Models$Y)
+### DHARMa Moran's I test for distance-based autocorrelation
+##  data:  r_aggr
+##  observed = 0.00356321, expected = -0.00066622, sd = 0.00382220, p-value = 0.2685
+##  alternative hypothesis: Distance-based autocorrelation
+
+```
+
+### Save best models for two length bin model with 200 cut off
+
+Note that there is a naming convention that makes no sense here. The file deltalognormalLogArea.sptlVaryingMLD.200Models is not spatial varying.
+
+```{r, save.models200plus}
+
+#--------------------------------------------------------
+# Save the best fit model
+#--------------------------------------------------------
+
+# Save the model selection table
+fwrite(model_decision_table.200Models, 
+       here(dir, "Final.Results", "Model.decision.table.200plusLenBins.csv"), 
+       sep = ",")
+
+# Save the best model
+saveRDS(deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml, 
+        here(dir, "Final.Results",
+             "S2.fit.200plusLenBin.model.reml.rds"))
+
+# Save the best model cross validation output
+saveRDS(cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml, 
+        here(dir, "Final.Results",
+             "S2.fit.200plusLenBin.model.reml.cv.rds"))
+
+# Extract Coeffs and Confidence Intervals from best model
+deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml.summary <-
+  tidy(cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml)
+
+fwrite(deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml.summary, 
+       here(dir, "Final.Results",
+            "S2.fit.200plusLenBin.model.reml.cv.cis.csv"))
+
+# Extract Coeffs and Confidence Intervals from best model
+deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml.optisummary <-
+  tidy(deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml)
+
+fwrite(deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml.optisummary, 
+       here(dir, "Final.Results",
+            "S2.fit.200plusLenBin.model.reml.opti.cis.csv"))
+
+```
+
+### For summary check of best fit 2 length bin model with 200 cut off
+
+Null Model (M0): Total_W ~ 1 (No random effects, no fixed effects).
+
+```{r, null.deviance_200plus}
+
+# 0. Null Model
+# Absolute Null: Baseline variance of the data
+m0_200plus <- sdmTMB(
+  Total_W ~ 1,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"), 
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = NULL,    
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "off",
+  spatial = "off",
+  reml = FALSE,
+  anisotropy = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_idx",
+  silent = TRUE
+)
+
+sanity(m0_200plus)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed Effects Only (M1_200plus): Total_W ~ YearSeas.nm (No spatial/spatiotemporal engines).
+
+```{r, deviance.explained.by.fixed.effects_200plus}
+
+# 1. FIXED EFFECTS ALONE
+# (YearSeas + len.bin)
+m1_fixed_200plus <- update(m0_200plus, 
+                           formula = Total_W ~ as.factor(YearSeas.nm) + merged.bin,
+                           #time = NULL,    
+                           # Use "ar1" or "rw" if you expect temporal autocorrelation
+                           # Otherwise, use default "iid" (independent by time step)
+                           #spatiotemporal = "off",
+                           reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m1_fixed_200plus)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed + Spatial Random Effects
+
+```{r, deviance.explained.by.fixed.plus.spatial.random.effects_200plus}
+
+# 2. SPATIALLY VARYING COMPONENT ALONE 
+# (This adds the 'spatial' engine to the fixed effects)
+m2_sv_200plus <- update(m1_fixed_200plus, 
+                        formula = Total_W ~ as.factor(YearSeas.nm) + merged.bin,
+                        time = NULL,   
+                        # Use "ar1" or "rw" if you expect temporal autocorrelation
+                        # Otherwise, use default "iid" (independent by time step)
+                        spatiotemporal = "off",
+                        spatial = "on",
+                        reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m2_sv_200plus)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+The Full Model (M3): Add spatiotemporal = "iid".
+
+```{r, deviance.explained.by.fixed.plus.spatial.random.plus.spatiotemporal.effects_200plus}
+
+# 3. SPATIOTEMPORAL COMPONENT ALONE
+# (The full model including random ST fields)
+m3_full_200plus <- update(m2_sv_200plus,
+                          formula = Total_W ~ as.factor(YearSeas.nm) + merged.bin,
+                          time = "YearSeas.nm",  
+                          spatiotemporal = "iid", 
+                          reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m3_full_200plus)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+--- THE MATH ---
+
+```{r, deviance.explained.by.component_200plus}
+
+d0_200plus <- deviance(m0_200plus)
+d1_200plus <- deviance(m1_fixed_200plus)
+d2_200plus <- deviance(m2_sv_200plus)
+d3_200plus <- deviance(m3_full_200plus)
+
+# Percentages of total deviance explained by each:
+pct_full_model_200plus <- 1 - d3_200plus / d0_200plus
+pct_fixed_only_200plus <- (d0_200plus - d1_200plus) / d0_200plus
+pct_sv_only_200plus    <- (d1_200plus - d2_200plus) / d0_200plus
+pct_st_only_200plus    <- (d2_200plus - d3_200plus) / d0_200plus
+
+pct_full_model_200plus*100
+# [1] 46.51859
+
+pct_fixed_only_200plus*100
+# [1] 17.71035
+
+pct_sv_only_200plus*100
+# [1] 14.31265
+
+pct_st_only_200plus*100
+# [1] 14.49558
+
+```
+
+## For two length bins (supra small and larger)
+
+These are: "less150" and "150plus".
+
+```{r, TwoLengthBin150StructureSummary}
+
+TwoLenBin150.dat.w.folds <- data_for_3bin_model %>%
+  select(-c(len.bin, merged.bin)) %>%
+  left_join(master_fold_lookup, by = "keys") %>%
+  distinct() %>%
+  mutate(merged.bin2 = as.factor(merged.bin2))
+
+# 2. Update it for your Length Bin data (data_for_3bin_model.w.folds)
+# This keeps the exact same triangles/barrier but matches the 522 rows
+TwoLenBin150Mesh <- sdmTMB::make_mesh(
+  data = TwoLenBin150.dat.w.folds, 
+  xy_cols = c("X", "Y"), 
+  mesh = barrier2mld_42.5$mesh # This "borrows" the physical structure of the old mesh
+)
+
+```
+
+### Fit two length bin models (150 mm cutoff)
+
+```{r, TwoLengthBin.150Models}
+
+#-----------------------------------------------------------
+# Structure 1: Shared Spatial Field: A single spatial field 
+# common to all size classes (spatial = "on", no spatial_varying).
+#-----------------------------------------------------------
+
+# Length bin as covariate only
+deltalognormalLogArea.w.lengthBin.CoVar.150Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+## Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate only and MLD in offset
+deltalognormalLogArea.w.lengthBin.CoVar.MLD.150Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar.MLD.150Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 2: Independent Fields: Separate, independent spatial 
+# fields estimated for each length bin
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+deltalognormalLogArea.sptlVarying.150Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.150Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# MLD in offset
+deltalognormalLogArea.sptlVaryingMLD.150Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVaryingMLD.150Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ 0 + merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 3: Shared Intercept + Reference Baseline (Isolated): 
+# The spatial field of the primary length bin  acts as a reference 
+# baseline, with  remaining fields modelled as spatial deviations
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. off)
+deltalognormalLogArea.sptlVarying.str3.150Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 3) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str3.150Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. off) MLD in offset
+deltalognormalLogArea.sptlVarying.str3.MLD.150Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str3.MLD.150Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "off",
+  spatial_varying = ~ merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+#------------------------------------------------------------------
+# Structure 4: Shared Field + Baseline Reference Deviations (Nested): 
+# A global shared spatial field  plus spatial varying processes 
+# modelled as nested length-bin deviations
+#------------------------------------------------------------------
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. on)
+deltalognormalLogArea.sptlVarying.str4.150Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str4.150Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. on) MLD in offset
+deltalognormalLogArea.sptlVarying.str4.MLD.150Models <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str4.MLD.150Models <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin2,
+  anisotropy = FALSE,
+  reml = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogAreaMLD",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+```
+
+### Create model decision table for best two length bin model with 150 cut off
+
+```{r, ThreeLenBinModelDecisions, message = FALSE, warning = FALSE, results = "hide"}
+
+# ====================================================================
+# 1. Define Helper Function
+# ====================================================================
+
+get_metrics <- function(objs, nm) {
+  suite_nm <- if(!is.null(objs$suite)) objs$suite else "Unassigned"
+  
+  if (is.null(objs$main) || is.null(objs$cv)) {
+    return(tibble(
+      Suite = suite_nm, Model = nm, `Total ELPD` = NA, 
+      `Main Sanity` = "Fit Error", `CV Sanity` = "Fit Error", `Folds Passed` = "0/5"
+    ))
+  }
+  
+  res <- try({
+    pointwise <- objs$cv$data$cv_loglik
+    folds <- objs$cv$fold_loglik
+    n_obs <- length(pointwise)
+    k_folds <- length(folds)
+    
+    pw_sd <- sd(pointwise, na.rm = TRUE)
+    pw_se <- sqrt(n_obs * var(pointwise, na.rm = TRUE))
+    fw_sd <- sd(folds, na.rm = TRUE)
+    fw_se <- sqrt(k_folds * var(folds, na.rm = TRUE))
+    
+    main_s <- all(unlist(sdmTMB::sanity(objs$main)))
+    fold_checks <- map_lgl(objs$cv$models, ~ all(unlist(sdmTMB::sanity(.x))))
+    
+    tibble(
+      Suite = suite_nm,
+      Model = nm,
+      `Total ELPD` = objs$cv$sum_loglik,
+      `PW SD` = round(pw_sd, 3), `PW SE` = round(pw_se, 2),
+      `FW SD` = round(fw_sd, 2), `FW SE` = round(fw_se, 2),
+      `Main Sanity` = if(main_s) "Pass" else "Fail",
+      `CV Sanity` = if(all(fold_checks)) "OK" else "! Warning",
+      `Folds Passed` = paste0(sum(fold_checks), "/", k_folds)
+    )
+  }, silent = TRUE)
+  
+  if (inherits(res, "try-error")) {
+    return(tibble(Suite = suite_nm, Model = nm, `Main Sanity` = "Extract Error"))
+  }
+  return(res)
+}
+
+# ====================================================================
+# 2. Run the Loop to Collect Data
+# ====================================================================
+
+Initial.model.selection.is.made = T
+ 
+if (!Initial.model.selection.is.made) {
+  
+  all_results.150Models <- list(
+    # Structure 1: Shared spatial field
+    "Structure 1: Lognormal + LengthBin: Log-link w/spl on" = 
+      list(main = deltalognormalLogArea.w.lengthBin.CoVar.150Models, 
+           cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models,
+           suite = "1. LengthBin Combination"),
+    "Structure 1: Lognormal + LengthBin: Log-link w/spl on + Offset w/MLD" = 
+      list(main = deltalognormalLogArea.w.lengthBin.CoVar.MLD.150Models, 
+           cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.MLD.150Models,
+           suite = "1. LengthBin Combination"),
+    
+    # Structure 2: Independent fields / No shared field
+    "Structure 2: Lognormal + LengthBin (~ 0 + LengthBin spatial_varying w/spl off)" = 
+      list(main = deltalognormalLogArea.sptlVarying.150Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.150Models,
+           suite = "1. LengthBin Combination"),
+    "Structure 2: Lognormal + LengthBin (~ 0 + LengthBin spatial_varying w/sptl off) + Offset w/MLD" =
+      list(main = deltalognormalLogArea.sptlVaryingMLD.150Models, 
+           cv = cv_deltalognormalLogArea.sptlVaryingMLD.150Models,
+           suite = "1. LengthBin Combination"),
+    
+    # Structure 3: Shared intercept + Reference baseline field (Isolated)
+    "Structure 3: Lognormal + LengthBin (~ LengthBin spatial_varying w/spl off)" = 
+      list(main = deltalognormalLogArea.sptlVarying.str3.150Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str3.150Models,
+           suite = "1. LengthBin Combination"),
+    "Structure 3: Lognormal + LengthBin (~ LengthBin spatial_varying w/sptl off) + Offset w/MLD" = 
+      list(main = deltalognormalLogArea.sptlVarying.str3.MLD.150Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str3.MLD.150Models,
+           suite = "1. LengthBin Combination"),
+    
+    # Structure 4: Shared intercept + Reference baseline field (Nested)
+    "Structure 4: Lognormal + LengthBin (~ LengthBin spatial_varying w/sptl on)" = 
+      list(main = deltalognormalLogArea.sptlVarying.str4.150Models, 
+           cv = cv_deltalognormalLogArea.sptlVarying.str4.150Models,
+           suite = "1. LengthBin Combination"),
+    "Structure 4: Lognormal + LengthBin (~ LengthBin spatial_varying w/sptl on) + Offset w/MLD" = 
+      list(main = deltalognormalLogArea.sptlVarying.str4.MLD.150Models, 
+           cv = NULL,
+           suite = "1. LengthBin Combination")
+  )
+  
+  # Step A: Combine raw metrics into one dataframe
+  summary_df.150Models <- imap_dfr(all_results.150Models, ~get_metrics(.x, .y))
+  
+  # ====================================================================
+  # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
+  # ====================================================================
+  
+  model_decision_table.150Models <- summary_df.150Models %>%
+    # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
+    select(
+      Suite, Model, 
+      `Main Sanity`, `CV Sanity`, `Folds Passed`, 
+      `Total ELPD`, 
+      everything() 
+    ) %>%
+    
+    # Calculate relative DELTA ELPD grouped by Suite
+    group_by(Suite) %>%
+    mutate(
+      # Condition: Row must pass both sanity tests and have valid ELPD data
+      is_valid_baseline = `Main Sanity` == "Pass" & 
+                          `CV Sanity` == "OK" & 
+                          !is.na(`Total ELPD`),
+      
+      # FIX: Target the HIGHEST (most positive/best fit) ELPD among passing models
+      baseline_elpd = if(any(is_valid_baseline)) {
+        max(`Total ELPD`[is_valid_baseline], na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+      
+      # Compute Delta (The top model outputs 0, inferior models output negative values)
+      `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
+    ) %>%
+    ungroup() %>%
+    
+    # Drop calculation columns and position DELTA ELPD next to Total ELPD
+    select(-is_valid_baseline, -baseline_elpd) %>%
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    
+    # Sorting: Sort by Suite, then arrange by Delta descending 
+    # This places your 0-valued best model at the top of each suite.
+    arrange(Suite, desc(`DELTA ELPD`))
+
+  # Print final corrected table
+  print(model_decision_table.150Models)
+}
+
+# View(model_decision_table.150Models)
+
+```
+
+### Re-run best model with REML
+
+```{r, REML.150plus}
+
+#-----------------------------------------------------------
+# Structure 1: Shared Spatial Field: A single spatial field 
+# common to all size classes (spatial = "on", no spatial_varying).
+#-----------------------------------------------------------
+
+# Length bin as covariate only
+deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+## Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin2,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+```
+
+### Update model selection table
+
+```{r, 150LenBinModelDecisions.update, message = FALSE, warning = FALSE, results = "hide"}
+
+Initial.150model.selection.reml.is.made = T
+
+if (Initial.150model.selection.reml.is.made == F){
+  # Add the new model to the list
+  all_results.150Models[["Lognormal + LengthBin: Log-link w/spl on and w/o REML (From Suite 1)"]] <- 
+    list(main = deltalognormalLogArea.w.lengthBin.CoVar.150Models, 
+         cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models,
+         suite = "2. Restricted Maximum Likelihood (REML) Estimation")
+ all_results.150Models[["Lognormal + LengthBin: Log-link w/spl on and w/ REML"]] <- 
+    list(main = deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml, 
+         cv = cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml, 
+         suite = "2. Restricted Maximum Likelihood (REML) Estimation")
+ 
+  # Step A: Combine raw metrics into one dataframe
+  summary_df.150Models <- imap_dfr(all_results.150Models, ~get_metrics(.x, .y))
+  
+  # ====================================================================
+  # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
+  # ====================================================================
+  
+  model_decision_table.150Models <- summary_df.150Models %>%
+    # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
+    select(
+      Suite, Model, 
+      `Main Sanity`, `CV Sanity`, `Folds Passed`, 
+      `Total ELPD`, 
+      everything() 
+    ) %>%
+    
+    # Calculate relative DELTA ELPD grouped by Suite
+    group_by(Suite) %>%
+    mutate(
+      # Condition: Row must pass both sanity tests and have valid ELPD data
+      is_valid_baseline = `Main Sanity` == "Pass" & 
+                          `CV Sanity` == "OK" & 
+                          !is.na(`Total ELPD`),
+      
+      # FIX: Target the HIGHEST (most positive/best fit) ELPD among passing models
+      baseline_elpd = if(any(is_valid_baseline)) {
+        max(`Total ELPD`[is_valid_baseline], na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+      
+      # Compute Delta (The top model outputs 0, inferior models output negative values)
+      `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
+    ) %>%
+    ungroup() %>%
+    
+    # Drop calculation columns and position DELTA ELPD next to Total ELPD
+    select(-is_valid_baseline, -baseline_elpd) %>%
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    
+    # Sorting: Sort by Suite, then arrange by Delta descending 
+    # This places your 0-valued best model at the top of each suite.
+    arrange(Suite, desc(`DELTA ELPD`))
+
+  # Print final corrected table
+  print(model_decision_table.150Models)
+}
+
+```
+
+### Use DHARMa to test goodness of fit on best two length bin model with 150 cut off
+
+1) Check if the spatial random field has correctly accounted for spatial correlation.
+2) Check if delta/hurdle models in sdmTMB are properly handling zero-inflation.
+3) Visualize if a more complex model (*e.g.*, adding AR1 spatiotemporal fields) significantly improves the residuals compared to a simpler model. 
+
+```{r, DHARMa.check150plus}
+
+set.seed(27)
+
+# 2. Generate simulation-based residuals (recommended approach)
+sim.150Models <- simulate(deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml, 
+                         nsim = 500, type = "mle-mvn")
+
+r_fit.150Models <- 
+  dharma_residuals(sim.150Models, deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml, 
+                   return_DHARMa = TRUE)
+
+# 3. Use DHARMa functions to plot and test
+plot(r_fit.150Models)
+
+DHARMa::testResiduals(r_fit.150Models)
+# $uniformity                                                 
+# 
+# 	Asymptotic one-sample Kolmogorov-Smirnov test
+# 
+# data:  simulationOutput$scaledResiduals
+# D = 0.010296, p-value = 0.5469
+# alternative hypothesis: two-sided
+# 
+# 
+# $dispersion
+# 
+# 	DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
+# 
+# data:  simulationOutput
+# dispersion = 0.011247, p-value = 0.076
+# alternative hypothesis: two.sided
+# 
+# 
+# $outliers
+# 
+# 	DHARMa outlier test based on exact binomial test with approximate expectations
+# 
+# data:  simulationOutput
+# outliers at both margin(s) = 16, observations = 6011, p-value = 0.1233
+# alternative hypothesis: true probability of success is not equal to 0.003992016
+# 95 percent confidence interval:
+#  0.001522183 0.004318985
+# sample estimates:
+# frequency of outliers (expected: 0.00399201596806387 ) 
+#                                            0.002661787 
+
+TwoLenBin150.dat.w.folds$resids.150Models <- r_fit.150Models$scaledResiduals # from dharma_residuals
+ggplot(TwoLenBin150.dat.w.folds, aes(X, Y, color = resids.150Models)) + 
+  geom_point() + 
+    scale_colour_gradient2(low = "blue", mid = "grey", high = "red",
+                           midpoint = 0.5)
+
+DHARMa::testZeroInflation(r_fit.150Models)
+# DHARMa zero-inflation test via comparison to expected zeros with simulation
+### under H0 = fitted model
+##  data:  simulationOutput
+##  ratioObsSim = 1.0017, p-value = 0.668
+##  alternative hypothesis: two.sided
+
+# Test spatial autocorrelation 
+## 1. Recalculate to group by location
+r_aggr.150Models <- DHARMa::recalculateResiduals(r_fit.150Models, 
+                                       group = interaction(TwoLenBin150.dat.w.folds$X,
+                                                           TwoLenBin150.dat.w.folds$Y))
+
+## 2. Get the unique coordinates that match the aggregated residuals
+coords_unique.150Models <- TwoLenBin150.dat.w.folds %>%
+  group_by(X, Y) %>%
+  summarize(.groups = "drop")
+
+## 3. Run the test
+DHARMa::testSpatialAutocorrelation(r_aggr.150Models, 
+                                   x = coords_unique.150Models$X, 
+                                   y = coords_unique.150Models$Y)
+### DHARMa Moran's I test for distance-based autocorrelation
+##  data:  r_aggr
+##  observed = 0.00174157, expected = -0.00066622, sd = 0.00382219, p-value = 0.5287
+##  alternative hypothesis: Distance-based autocorrelation
+
+```
+
+### Save best models for two length bin model with 150 cut off
+
+```{r, save.models150plus}
+
+# Save the model selection table
+fwrite(model_decision_table.150Models, 
+       here(dir, "Final.Results", "Model.decision.table.150plusLenBins.csv"), 
+       sep = ",")
+
+# Save the final model
+saveRDS(deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml, 
+        here(dir, "Final.Results",
+             "S2.fit.150plusLenBin.model.reml.rds"))
+
+# Save the cross validation output
+saveRDS(cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml, 
+        here(dir, "Final.Results",
+             "S2.fit.150plusLenBin.model.reml.cv.rds"))
+
+# Extract Coeffs and Confidence Intervals
+deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml.summary <-
+  tidy(cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml)
+
+fwrite(deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml.summary, 
+       here(dir, "Final.Results",
+            "S2.fit.150plusLenBin.model.reml.cv.cis.csv"))
+
+# Extract Coeffs and Confidence Intervals
+deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml.optisummary <-
+  tidy(deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml)
+
+fwrite(deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml.optisummary, 
+       here(dir, "Final.Results",
+            "S2.fit.150plusLenBin.model.reml.opti.cis.csv"))
+
+```
+
+### For summary check of best fit 2 length bin model with 150 cut off
+
+Null Model (M0): Total_W ~ 1 (No random effects, no fixed effects).
+
+```{r, null.deviance_150plus}
+
+# 0. Null Model
+# Absolute Null: Baseline variance of the data
+m0_150plus <- sdmTMB(
+  Total_W ~ 1,
+  data = TwoLenBin150.dat.w.folds, 
+  family = delta_lognormal(type = "standard"), 
+  mesh = TwoLenBin150Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = NULL,    
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "off",
+  spatial = "off",
+  reml = FALSE,
+  anisotropy = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_idx",
+  silent = TRUE
+)
+
+sanity(m0_150plus)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed Effects Only (M1_150plus): Total_W ~ YearSeas.nm (No spatial/spatiotemporal engines).
+
+```{r, deviance.explained.by.fixed.effects_150plus}
+
+# 1. FIXED EFFECTS ALONE
+# (YearSeas + len.bin)
+m1_fixed_150plus <- update(m0_150plus, 
+                           formula = Total_W ~ as.factor(YearSeas.nm) + merged.bin2,
+                           #time = NULL,    
+                           # Use "ar1" or "rw" if you expect temporal autocorrelation
+                           # Otherwise, use default "iid" (independent by time step)
+                           #spatiotemporal = "off",
+                           reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m1_fixed_150plus)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed + Spatial Random Effects
+
+```{r, deviance.explained.by.fixed.plus.spatial.random.effects_150plus}
+
+# 2. SPATIALLY VARYING COMPONENT ALONE 
+# (This adds the 'spatial' engine to the fixed effects)
+m2_sv_150plus <- update(m1_fixed_150plus, 
+                        formula = Total_W ~ as.factor(YearSeas.nm) + merged.bin2,
+                        time = NULL,   
+                        # Use "ar1" or "rw" if you expect temporal autocorrelation
+                        # Otherwise, use default "iid" (independent by time step)
+                        spatiotemporal = "off",
+                        spatial = "on",
+                        reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m2_sv_150plus)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+The Full Model (M3): Add spatiotemporal = "iid".
+
+```{r, deviance.explained.by.fixed.plus.spatial.random.plus.spatiotemporal.effects_150plus}
+
+# 3. SPATIOTEMPORAL COMPONENT ALONE
+# (The full model including random ST fields)
+m3_full_150plus <- update(m2_sv_150plus,
+                          formula = Total_W ~ as.factor(YearSeas.nm) + merged.bin2,
+                          time = "YearSeas.nm",  
+                          spatiotemporal = "iid", 
+                          reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m3_full_150plus)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+--- THE MATH ---
+
+```{r, deviance.explained.by.component_150plus}
+
+d0_150plus <- deviance(m0_150plus)
+d1_150plus <- deviance(m1_fixed_150plus)
+d2_150plus <- deviance(m2_sv_150plus)
+d3_150plus <- deviance(m3_full_150plus)
+
+# Percentages of total deviance explained by each:
+pct_full_model_150plus <- 1 - d3_150plus / d0_150plus
+pct_fixed_only_150plus <- (d0_150plus - d1_150plus) / d0_150plus
+pct_sv_only_150plus    <- (d1_150plus - d2_150plus) / d0_150plus
+pct_st_only_150plus    <- (d2_150plus - d3_150plus) / d0_150plus
+
+pct_full_model_150plus*100
+# [1] 41.97942
+
+pct_fixed_only_150plus*100
+# [1] 16.86192
+
+pct_sv_only_150plus*100
+# [1] 12.84176
+
+pct_st_only_150plus*100
+# [1] 12.27573
+
+```
+
+# Compare RMSE and MAE
+
+## Load saved CV outputs
+
+```{r, load.cv.outputs}
+
+# For Full Model
+cv_deltalognormal.loglink.reml <- readRDS(
+  here(dir, "Final.Results", "S2.fit.basic.model.reml.cv.rds"))
+
+# For 3 Length Bin Model
+cv_deltalognormalLogArea.w.lengthBin.CoVar.reml <- readRDS(
+  here(dir, "Final.Results", "S2.fit.3LenBin.model.reml.cv.rds"))
+
+# For 2 Length Bin 200 plus model with no spatial varying effect
+# and MLD in offset
+cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml <- readRDS(
+  here(dir, "Final.Results", "S2.fit.200plusLenBin.model.reml.cv.rds"))
+
+# For 2 Length Bin 150 plus model with no spatial varying effect
+cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml <- readRDS(
+  here(dir, "Final.Results", "S2.fit.150plusLenBin.model.reml.cv.rds"))
+
+```
+
+## Calculate station and global RMSE
+
+```{r, rmse.mae.model.comparisons}
+
+# Safe aggregation helper
+sum_or_na <- function(x) {
+  if (all(is.na(x))) NA_real_ else sum(x, na.rm = TRUE)
+}
+
+#-----------------------------------------------
+#-----------------------------------------------
+# For Baseline Model
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance 
+# (RMSE / MAE)
+#-----------------------------------------------
+
+preds_full <- cv_deltalognormal.loglink.reml$data %>%
+  group_by(.folds, keys) %>%
+  summarize(
+    # Total observed biomass at that station (sum of bins)
+    obs_total = sum(Total_W), 
+    # Total predicted biomass (sum of bin-level cv_predicted)
+    pred_total = sum_or_na(cv_predicted),
+    .groups = "drop"
+  )
+
+preds_full_comparison <- preds_full %>%
+  group_by(.folds) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(
+    diff  = sum_obs - sum_pred,
+    Model = "Full model (sptl)"
+  )
+
+#-----------------------------------------------
+# 2. Fit Null Model (Explicit Fold Alignment)
+#-----------------------------------------------
+
+#m0_full_cv <- sdmTMB::sdmTMB_cv(
+#  Total_W ~ 1,
+#  data           = cv_deltalognormal.loglink.reml$data, 
+#  family         = delta_lognormal(type = "standard"), 
+#  mesh           = barrier2mld_42.5,
+#  time           = NULL,    
+#  spatiotemporal = "off",
+#  spatial        = "off",
+#  reml           = FALSE,
+#  anisotropy     = FALSE,
+#  offset         = "LogArea",
+#  fold_ids       = cv_deltalognormal.loglink.reml$data$.folds,
+#  silent         = TRUE
+#)
+
+#-----------------------------------------------
+# 3. Calculate Delta Deviance Explained R2
+#-----------------------------------------------
+
+## Out-of-fold log-likelihoods
+#ll_cv   <- cv_deltalognormal.loglink.reml$sum_loglik
+#ll_null <- m0_full_cv$sum_loglik
+
+## Extract positive observations
+#y_pos <- cv_deltalognormal.loglink.reml$data$Total_W[cv_deltalognormal.loglink.reml$data$Total_W > 0]
+
+## Extract average lognormal dispersion (sigma) across fold models
+#sigma <- mean(sapply(cv_deltalognormal.loglink.reml$models, sigma))
+
+## Compute saturated log-likelihood using dlnorm
+#ll_sat <- sum(dlnorm(y_pos, meanlog = log(y_pos), sdlog = sigma, log = TRUE))
+
+## Compute Delta Deviance Explained R2
+#r2_dev_delta <- (ll_cv - ll_null) / (ll_sat - ll_null)
+
+#-----------------------------------------------
+# 4. Calculate Global Metrics
+#-----------------------------------------------
+
+final_full_summary <- preds_full %>%
+  summarize(
+    global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+    global_mae  = mean(abs(obs_total - pred_total)),
+    .groups     = "drop" 
+  ) %>%
+  mutate(
+#    r2_dev_delta = r2_dev_delta, 
+#    ll_cv        = ll_cv,
+#    ll_null      = ll_null,
+#    ll_sat       = ll_sat,
+#    sigma        = sigma,
+    Model        = "Full model (sptl)"
+    )
+
+View(final_full_summary)
+
+#-----------------------------------------------
+#-----------------------------------------------
+# For Three Length Bin Model
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance 
+# (RMSE / MAE)
+#-----------------------------------------------
+
+preds_3lenBin <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data %>%
+  group_by(fold_id, keys) %>%
+  summarize(
+    # Total observed biomass at that station (sum of bins)
+    obs_total = sum(Total_W), 
+    # Total predicted biomass (sum of bin-level cv_predicted)
+    pred_total = sum_or_na(cv_predicted),
+    .groups = "drop"
+  )
+
+preds_3lenBin_comparison <- preds_3lenBin %>%
+  group_by(fold_id) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(diff = sum_obs - sum_pred,
+         Model = "3 LenBins (CoVar + sptl)") %>%
+  rename(.folds = fold_id)
+
+#-----------------------------------------------
+# 2. Fit Null Model (Explicit Fold Alignment)
+#-----------------------------------------------
+
+#m0_3lenBin_cv <- sdmTMB::sdmTMB_cv(
+#  Total_W ~ 1,
+#  data = cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data, 
+#  family = delta_lognormal(type = "standard"), 
+#  mesh = ThreeLenBinMesh,
+#  time = NULL,    
+#  spatiotemporal = "off",
+#  spatial = "off",
+#  reml = FALSE,
+#  anisotropy = FALSE,
+#  offset = "LogArea",
+#  fold_ids = cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$fold_id,
+#  silent = TRUE
+#)
+
+#-----------------------------------------------
+# 3. Calculate Delta Deviance Explained R2
+#-----------------------------------------------
+
+## Out-of-fold log-likelihoods
+#ll_3lenBin_cv   <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$sum_loglik
+#ll_3lenBin_null <- m0_3lenBin_cv$sum_loglik
+
+## Extract positive observations
+#y_3lenBin_pos <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data$Total_W[cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data$Total_W > 0]
+
+## Extract average lognormal dispersion (sigma) across fold models
+#sigma_3lenBin <- mean(sapply(cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$models, sigma))
+
+## Compute saturated log-likelihood using dlnorm
+#ll_3lenBin_sat <- sum(dlnorm(y_3lenBin_pos, meanlog = log(y_3lenBin_pos), sdlog = sigma_3lenBin, log = TRUE))
+
+## Compute Delta Deviance Explained R2
+#r2_dev_delta_3lenBin <- (ll_3lenBin_cv - ll_3lenBin_null) / (ll_3lenBin_sat - ll_3lenBin_null)
+
+#-----------------------------------------------
+# 4. Calculate Global Metrics
+#-----------------------------------------------
+
+final_3lenBin_summary <- preds_3bins %>%
+  summarize(global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+            global_mae  = mean(abs(obs_total - pred_total)),
+            .groups     = "drop") %>%
+  mutate(
+#    r2_dev_delta = r2_dev_delta_3lenBin, 
+#    ll_cv        = ll_3lenBin_cv,
+#    ll_null      = ll_3lenBin_null,
+#    ll_sat       = ll_3lenBin_sat,
+#    sigma        = sigma_3lenBin,
+     Model        = "3 LenBins (CoVar + sptl)"
+     )
+
+View(final_3lenBin_summary)
+
+#-----------------------------------------------
+#-----------------------------------------------
+# For 200 Cut-off Models
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance 
+# (RMSE / MAE)
+#-----------------------------------------------
+
+preds_bin200 <- cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data %>%
+  group_by(fold_id, keys) %>%
+  summarize(
+    # Total observed biomass at that station (sum of bins)
+    obs_total = sum(Total_W), 
+    # Total predicted biomass (sum of bin-level cv_predicted)
+    pred_total = sum_or_na(cv_predicted),
+    .groups = "drop"
+  )
+
+preds_bin200_comparison <- preds_bin200 %>%
+  group_by(fold_id) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(diff = sum_obs - sum_pred,
+         Model = "2 LenBins 200 mm cut off (CoVar + sptl)") %>%
+  rename(.folds = fold_id)
+
+#-----------------------------------------------
+# 2. Fit Null Model (Explicit Fold Alignment)
+#-----------------------------------------------
+
+#m0_bin200_cv <- sdmTMB::sdmTMB_cv(
+#  Total_W ~ 1,
+#  data = cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data, 
+#  family = delta_lognormal(type = "standard"), 
+#  mesh = TwoLenBin200Mesh,
+#  time = NULL,    
+#  spatiotemporal = "off",
+#  spatial = "off",
+#  reml = FALSE,
+#  anisotropy = FALSE,
+#  offset = "LogArea",
+#  fold_ids = cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$fold_id,
+#  silent = TRUE
+#)
+
+#-----------------------------------------------
+# 3. Calculate Delta Deviance Explained R2
+#-----------------------------------------------
+
+## Out-of-fold log-likelihoods
+#ll_bin200_cv   <- cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$sum_loglik
+#ll_bin200_null <- m0_bin200_cv$sum_loglik
+
+## Extract positive observations
+#y_bin200_pos <- cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data$Total_W[cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data$Total_W > 0]
+
+## Extract average lognormal dispersion (sigma) across fold models
+#sigma_bin200 <- mean(sapply(cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$models, sigma))
+
+## Compute saturated log-likelihood using dlnorm
+#ll_bin200_sat <- sum(dlnorm(y_bin200_pos, meanlog = log(y_bin200_pos), sdlog = sigma_bin200, log = TRUE))
+
+## Compute Delta Deviance Explained R2
+#r2_dev_delta_bin200 <- (ll_bin200_cv - ll_bin200_null) / (ll_bin200_sat - ll_bin200_null)
+
+#-----------------------------------------------
+# 4. Calculate Global Metrics
+#-----------------------------------------------
+
+final_bin200_summary <- preds_bin200 %>%
+  summarize(global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+            global_mae  = mean(abs(obs_total - pred_total)),
+            .groups     = "drop") %>%
+  mutate(
+#    r2_dev_delta = r2_dev_delta_bin200, 
+#    ll_cv        = ll_bin200_cv,
+#    ll_null      = ll_bin200_null,
+#    ll_sat       = ll_bin200_sat,
+#    sigma        = sigma_bin200,
+     Model        = "2 LenBins 200 mm cut off (CoVar + sptl)"
+     )
+
+View(final_bin200_summary)
+
+#-----------------------------------------------
+#-----------------------------------------------
+# For 150 Cut-off Model
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance 
+# (RMSE / MAE)
+#-----------------------------------------------
+
+preds_bin150 <- cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data %>%
+  group_by(fold_id, keys) %>%
+  summarize(
+    # Total observed biomass at that station (sum of bins)
+    obs_total = sum(Total_W), 
+    # Total predicted biomass (sum of bin-level cv_predicted)
+    pred_total = sum_or_na(cv_predicted),
+    .groups = "drop"
+  )
+
+# 2. Calculate the performance metrics per Fold
+# Use this for your table showing how each fold performed
+preds_bin150_comparison <- preds_bin150 %>%
+  group_by(fold_id) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(diff = sum_obs - sum_pred,
+         Model = "2 LenBins 150 mm cut off (CoVar + sptl)") %>%
+  rename(.folds = fold_id)
+
+#-----------------------------------------------
+# 2. Fit Null Model (Explicit Fold Alignment)
+#-----------------------------------------------
+
+#m0_bin150_cv <- sdmTMB::sdmTMB_cv(
+#  Total_W ~ 1,
+#  data = cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data, 
+#  family = delta_lognormal(type = "standard"), 
+#  mesh = TwoLenBin150Mesh,
+#  time = NULL,    
+#  spatiotemporal = "off",
+#  spatial = "off",
+#  reml = FALSE,
+#  anisotropy = FALSE,
+#  offset = "LogArea",
+#  fold_ids = cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$fold_id,
+#  silent = TRUE
+#)
+
+#-----------------------------------------------
+# 3. Calculate Delta Deviance Explained R2
+#-----------------------------------------------
+
+## Out-of-fold log-likelihoods
+#ll_bin150_cv   <- cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$sum_loglik
+#ll_bin150_null <- m0_bin150_cv$sum_loglik
+
+## Extract positive observations
+#y_bin150_pos <- cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data$Total_W[cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data$Total_W > 0]
+
+## Extract average lognormal dispersion (sigma) across fold models
+#sigma_bin150 <- mean(sapply(cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$models, sigma))
+
+## Compute saturated log-likelihood using dlnorm
+#ll_bin150_sat <- sum(dlnorm(y_bin150_pos, meanlog = log(y_bin150_pos), sdlog = sigma_bin150, log = TRUE))
+
+## Compute Delta Deviance Explained R2
+#r2_dev_delta_bin150 <- (ll_bin150_cv - ll_bin150_null) / (ll_bin150_sat - ll_bin150_null)
+
+#-----------------------------------------------
+# 4. Calculate Global Metrics
+#-----------------------------------------------
+
+final_bin150_summary <- preds_bin150 %>%
+  summarize(global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+            global_mae  = mean(abs(obs_total - pred_total)),
+            .groups     = "drop") %>%
+  mutate(
+#    r2_dev_delta = r2_dev_delta_bin150, 
+#    ll_cv        = ll_bin150_cv,
+#    ll_null      = ll_bin150_null,
+#    ll_sat       = ll_bin150_sat,
+#    sigma        = sigma_bin150,
+     Model        = "2 LenBins 150 mm cut off (CoVar + sptl)"
+     )
+
+View(final_bin150_summary)
+
+```
+
+## Join and save comparison of RMSE and MAE
+
+```{r, join.save.rmse.mae}
+
+test <- rbind(preds_full_comparison, 
+              preds_3bins_comparison, 
+              preds_bin200_comparison,
+              preds_bin150_comparison)
+
+# Plotting the RMSE across folds
+rmse.plot <-
+  ggplot(test, aes(x = Model, y = rmse, color = Model)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.3) + # Shows the spread across folds
+  geom_jitter(width = 0.1, size = 2) +            # Shows the individual fold scores
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 17)) + # Wraps labels at ~15 chars
+  labs(#title = "Model Predictive Performance across Passed CV Folds",
+       y = "RMSE (Lower is Better)", 
+       x = "") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), # Horizontal & tight line spacing) 
+        legend.position = "none") # Optional: hides legend if color already matches x-axis labels)
+
+rmse.plot
+
+ggsave2(filename = "lengthBinSelectionViaRMSE.jpeg",
+        plot = rmse.plot, 
+        device ="jpeg",
+        path = here(dir, "Final.Figures"),
+        dpi = 1200, width = 29, height = 21,
+        unit = "cm", limitsize = FALSE)
+
+fwrite(test,
+       here(dir, "Final.Results",
+            "CV_Fold_StatisticsTableForLengthBinSelection.csv"),
+       sep = ",")
+
+#---------------------------------
+# For summary table
+#---------------------------------
+
+test2 <- rbind(final_full_summary, 
+               final_3lenBin_summary, 
+               final_bin200_summary,
+               final_bin150_summary)
+
+test2 <- test2 %>%
+  select(
+    Model,
+    `Global CV RMSE` = global_rmse,
+    `Global CV MAE`  = global_mae
+  ) %>%
+  mutate(
+    ref_rmse = final_full_summary$global_rmse,
+    ref_mae = final_full_summary$global_mae
+  ) %>%
+  # Calculate % difference relative to final_full_summary
+  mutate(
+    `% Δ RMSE` = (`Global CV RMSE` - ref_rmse) / ref_rmse * 100,
+    `% Δ MAE`  = (`Global CV MAE`  - ref_mae)  / ref_mae  * 100
+  ) %>%
+  # Optional: sort best to worst by RMSE
+  arrange(`Global CV RMSE`) %>%
+  select(-c(ref_rmse, ref_mae))
+
+View(test2)
+
+fwrite(test2, 
+       here(dir, "Final.Results",
+            "Global_CV_SummaryTableForLengthBinSelection.csv"),
+       sep = ",")
+
+```
+
+# Re run spatial varying model with REML
+
+Because only the 200 mm length bin group had spatial varying processes, re-run the best
+spatial varying process scenario for this model group and save.
+
+```{r, 200LenBinModelSptlVarying.w.reml}
+
+#----------------------------------------------------------
+# Length bin as covariate with spatial varying process
+# with shared intercept (sptl. on)
+#----------------------------------------------------------
+
+deltalognormalLogArea.sptlVarying.str4.200Models.reml <- sdmTMB::sdmTMB(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_id",
+  silent = TRUE
+)
+
+# Cross validate
+set.seed(27)
+# Run the parallel process
+plan(multisession, workers = 5) # Keep workers low to avoid RAM crash
+
+cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml <- sdmTMB::sdmTMB_cv(
+  Total_W ~ 0 + as.factor(Year) + merged.bin,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"),
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = "YearSeas.nm",
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "iid",
+  spatial = "on",
+  spatial_varying = ~ merged.bin,
+  anisotropy = FALSE,
+  reml = TRUE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  fold_ids = "fold_id",
+  silent = TRUE
+)
+
+```
+
+### Update model selection table
+
+```{r, 200LenBinModelDecisions.update2, message = FALSE, warning = FALSE, results = "hide"}
+
+Initial.200model.selection.reml2.is.made = T
+
+if (Initial.200model.selection.reml2.is.made == F){
+  # Add the new model to the list
+  all_results.200Models[["Lognormal + LengthBin: Log-link, Sptl Varying w/spl on and w/o REML (From Suite 1)"]] <- 
+    list(main = deltalognormalLogArea.sptlVarying.str4.200Models, 
+         cv = cv_deltalognormalLogArea.sptlVarying.str4.200Models,
+         suite = "2. Restricted Maximum Likelihood (REML) Estimation")
+ all_results.200Models[["Lognormal + LengthBin: Log-link, Sptl Varying w/spl on and w REML"]] <- 
+    list(main = deltalognormalLogArea.sptlVarying.str4.200Models.reml, 
+         cv = cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml, 
+         suite = "2. Restricted Maximum Likelihood (REML) Estimation")
+ 
+  # Step A: Combine raw metrics into one dataframe
+  summary_df.200Models <- imap_dfr(all_results.200Models, ~get_metrics(.x, .y))
+  
+  # ====================================================================
+  # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
+  # ====================================================================
+  
+  model_decision_table.200Models <- summary_df.200Models %>%
+    # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
+    select(
+      Suite, Model, 
+      `Main Sanity`, `CV Sanity`, `Folds Passed`, 
+      `Total ELPD`, 
+      everything() 
+    ) %>%
+    
+    # Calculate relative DELTA ELPD grouped by Suite
+    group_by(Suite) %>%
+    mutate(
+      # Condition: Row must pass both sanity tests and have valid ELPD data
+      is_valid_baseline = `Main Sanity` == "Pass" & 
+                          `CV Sanity` == "OK" & 
+                          !is.na(`Total ELPD`),
+      
+      # FIX: Target the HIGHEST (most positive/best fit) ELPD among passing models
+      baseline_elpd = if(any(is_valid_baseline)) {
+        max(`Total ELPD`[is_valid_baseline], na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+      
+      # Compute Delta (The top model outputs 0, inferior models output negative values)
+      `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
+    ) %>%
+    ungroup() %>%
+    
+    # Drop calculation columns and position DELTA ELPD next to Total ELPD
+    select(-is_valid_baseline, -baseline_elpd) %>%
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    
+    # Sorting: Sort by Suite, then arrange by Delta descending 
+    # This places your 0-valued best model at the top of each suite.
+    arrange(Suite, desc(`DELTA ELPD`))
+
+  # Print final corrected table
+  print(model_decision_table.200Models)
+}
+
+```
+
+### Use DHARMa to test goodness of fit on best two length bin model with 200 cut off without spatial varying effects
+
+Note this is the best model overall, which had no spatial varying effects. The name is misleading.
+
+1) Check if the spatial random field has correctly accounted for spatial correlation.
+2) Check if delta/hurdle models in sdmTMB are properly handling zero-inflation.
+3) Visualize if a more complex model (*e.g.*, adding AR1 spatiotemporal fields) significantly improves the residuals compared to a simpler model. 
+
+```{r, DHARMa.check200plus.sptlvarying}
+
+set.seed(27)
+
+# 2. Generate simulation-based residuals (recommended approach)
+sim.200Models.sptlVarying <- simulate(deltalognormalLogArea.sptlVarying.str4.200Models.reml, nsim = 500, type = "mle-mvn")
+
+r_fit.200Models.sptlVarying <- 
+  dharma_residuals(sim.200Models.sptlVarying, deltalognormalLogArea.sptlVarying.str4.200Models.reml, return_DHARMa = TRUE)
+
+# 3. Use DHARMa functions to plot and test
+plot(r_fit.200Models.sptlVarying)
+
+DHARMa::testResiduals(r_fit.200Models.sptlVarying)
+# $uniformity                                                 
+# 
+# 	Asymptotic one-sample Kolmogorov-Smirnov test
+# 
+# data:  simulationOutput$scaledResiduals
+# D = 0.012964, p-value = 0.2725
+# alternative hypothesis: two-sided
+# 
+# 
+# $dispersion
+# 
+# 	DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
+# 
+# data:  simulationOutput
+# dispersion = 0.0096556, p-value = 0.008
+# alternative hypothesis: two.sided
+# 
+# 
+# $outliers
+# 
+# 	DHARMa outlier test based on exact binomial test with approximate expectations
+# 
+# data:  simulationOutput
+# outliers at both margin(s) = 14, observations = 5923, p-value = 0.04915
+# alternative hypothesis: true probability of success is not equal to 0.003992016
+# 95 percent confidence interval:
+#  0.001292822 0.003962655
+# sample estimates:
+# frequency of outliers (expected: 0.00399201596806387 ) 
+#                                            0.002363667 
+
+TwoLenBin200.dat.w.folds$resids.sptlVarying <- r_fit.200Models.sptlVarying$scaledResiduals # from dharma_residuals
+ggplot(TwoLenBin200.dat.w.folds, aes(X, Y, color = resids.sptlVarying)) + 
+  geom_point() + 
+    scale_colour_gradient2(low = "blue", mid = "grey", high = "red",
+                           midpoint = 0.5)
+
+DHARMa::testZeroInflation(r_fit.200Models.sptlVarying)
+# DHARMa zero-inflation test via comparison to expected zeros with simulation
+### under H0 = fitted model
+##  data:  simulationOutput
+##  ratioObsSim = 1.0094, p-value = 0.008
+##  alternative hypothesis: two.sided
+
+# Test spatial autocorrelation 
+## 1. Recalculate to group by location
+r_aggr.200Models.sptlVarying <- DHARMa::recalculateResiduals(r_fit.200Models.sptlVarying, 
+                                                            group = interaction(TwoLenBin200.dat.w.folds$X,
+                                                                                TwoLenBin200.dat.w.folds$Y))
+## 2. Get the unique coordinates that match the aggregated residuals
+coords_unique.200Models.sptlVarying <- TwoLenBin200.dat.w.folds %>%
+  group_by(X, Y) %>%
+  summarize(.groups = "drop")
+
+## 3. Run the test
+DHARMa::testSpatialAutocorrelation(r_aggr.200Models.sptlVarying, 
+                                   x = coords_unique.200Models.sptlVarying$X, 
+                                   y = coords_unique.200Models.sptlVarying$Y)
+### DHARMa Moran's I test for distance-based autocorrelation
+##  data:  r_aggr
+##  observed = 0.00356321, expected = -0.00066622, sd = 0.00382215, p-value = 0.9755
+##  alternative hypothesis: Distance-based autocorrelation
+
+```
+
+### Save best spatial varying model
+
+```{r, save.models200plus.w.sptlvarying.processes}
+
+#--------------------------------------------------------
+# Save the best spatial varying model for further 
+# investigation (i.e., w/sptl)
+#--------------------------------------------------------
+
+# Update the saved model selection table
+fwrite(model_decision_table.200Models, 
+       here(dir, "Final.Results", "Model.decision.table.200plusLenBins.csv"), 
+       sep = ",")
+
+# Save the best fit spatial varying model
+saveRDS(deltalognormalLogArea.sptlVarying.str4.200Models.reml, 
+        here(dir, "Final.Results",
+             "S2.fit.200plusLenBin.model_SptlVarying.w.sptl.reml.rds"))
+
+# Save the cross validation output for best fit spatial varying model
+saveRDS(cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml, 
+        here(dir, "Final.Results",
+             "S2.fit.200plusLenBin.model_SptlVarying.w.sptl.reml.cv.rds"))
+
+# Extract Coeffs and Confidence Intervals for best fit spatial varying model
+deltalognormalLogArea.sptlVarying.str4.200Models.reml.summary <-
+  tidy(cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml)
+
+fwrite(deltalognormalLogArea.sptlVarying.str4.200Models.reml.summary, 
+       here(dir, "Final.Results",
+            "S2.fit.200plusLenBin.model_SptlVarying.w.sptl.reml.cv.cis.csv"))
+
+# Extract Coeffs and Confidence Intervals for best fit spatial varying model
+deltalognormalLogArea.sptlVarying.str4.200Models.reml.optisummary <-
+  tidy(deltalognormalLogArea.sptlVarying.str4.200Models.reml)
+
+fwrite(deltalognormalLogArea.sptlVarying.str4.200Models.reml.optisummary, 
+       here(dir, "Final.Results",
+            "S2.fit.200plusLenBin.model_SptlVarying.w.sptl.reml.opti.cis.csv"))
+
+```
+
+### For summary check of best fit 2 length bin model with 200 cut off and spatial varying effects with sptl
+
+Null Model (M0): Total_W ~ 1 (No random effects, no fixed effects).
+
+```{r, null.deviance_200plusSptlVarying.w.sptl}
+
+# 0. Null Model
+# Absolute Null: Baseline variance of the data
+m0_200plusSptlVarying <- sdmTMB(
+  Total_W ~ 1,
+  data = TwoLenBin200.dat.w.folds, 
+  family = delta_lognormal(type = "standard"), 
+  mesh = TwoLenBin200Mesh,
+  # Fit model by year and month
+  ## Note if time is specified, spatiotemporal correlation 
+  ## is tested by default
+  time = NULL,    
+  # Use "ar1" or "rw" if you expect temporal autocorrelation
+  # Otherwise, use default "iid" (independent by time step)
+  spatiotemporal = "off",
+  spatial = "off",
+  reml = FALSE,
+  anisotropy = FALSE,
+  # Note to keep units the same a grid cell use
+  offset = "LogArea",
+  #fold_ids = "fold_idx",
+  silent = TRUE
+)
+
+sanity(m0_200plusSptlVarying)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed Effects Only (M1_200plus): Total_W ~ YearSeas.nm (No spatial/spatiotemporal engines).
+
+```{r, deviance.explained.by.fixed.effects_200plusSptlVarying.w.sptl}
+
+# 1. FIXED EFFECTS ALONE
+# (YearSeas + len.bin)
+m1_fixed_200plusSptlVarying <- update(m0_200plusSptlVarying, 
+                                      formula = Total_W ~ as.factor(YearSeas.nm) +
+                                        merged.bin,
+                                      #time = NULL,    
+                                      # Use "ar1" or "rw" if you expect temporal
+                                      # autocorrelation
+                                      # Otherwise, use default "iid" 
+                                      # (independent by time step)
+                                      #spatiotemporal = "off",
+                                      reml = FALSE) # Note for deviance explained
+                                                    # you must use ML
+
+sanity(m1_fixed_200plusSptlVarying)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+Fixed + Spatial Random Effects
+
+```{r, deviance.explained.by.fixed.plus.spatial.random.effects_200plusSptlVarying.w.sptl}
+
+# 2. SPATIALLY VARYING COMPONENT ALONE 
+# (This adds the 'spatial' engine to the fixed effects)
+m2_sv_200plusSptlVarying <- update(m1_fixed_200plusSptlVarying, 
+                        formula = Total_W ~ as.factor(YearSeas.nm) + merged.bin,
+                        time = NULL,   
+                        # Use "ar1" or "rw" if you expect temporal autocorrelation
+                        # Otherwise, use default "iid" (independent by time step)
+                        spatiotemporal = "off",
+                        spatial = "on",
+                        spatial_varying = ~ merged.bin,
+                        reml = FALSE) # Note for deviance explained you must use ML
+
+sanity(m2_sv_200plusSptlVarying)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+The Full Model (M3): Add spatiotemporal = "iid".
+
+```{r, deviance.explained.by.fixed.plus.spatial.random.plus.spatiotemporal.effects_200plusSptlVarying.w.sptl}
+
+# 3. SPATIOTEMPORAL COMPONENT ALONE
+# (The full model including random ST fields)
+m3_full_200plusSptlVarying <- update(m2_sv_200plusSptlVarying,
+                                     formula = Total_W ~ as.factor(YearSeas.nm) +
+                                       merged.bin,
+                                     time = "YearSeas.nm",  
+                                     spatiotemporal = "iid", 
+                                     reml = FALSE) # Note for deviance explained 
+                                                   # you must use ML
+
+sanity(m3_full_200plusSptlVarying)
+# ✔ Non-linear minimizer suggests successful convergence
+# ✔ Hessian matrix is positive definite
+# ✔ No extreme or very small eigenvalues detected
+# ✔ No gradients with respect to fixed effects are >= 0.001
+# ✔ No fixed-effect standard errors are NA
+# ✔ No standard errors look unreasonably large
+# ✔ No sigma parameters are < 0.01
+# ✔ No sigma parameters are > 100
+
+```
+
+--- THE MATH ---
+
+```{r, deviance.explained.by.component_200plusSptlVarying.w.sptl}
+
+d0_200plusSptlVarying <- deviance(m0_200plusSptlVarying)
+d1_200plusSptlVarying <- deviance(m1_fixed_200plusSptlVarying)
+d2_200plusSptlVarying <- deviance(m2_sv_200plusSptlVarying)
+d3_200plusSptlVarying <- deviance(m3_full_200plusSptlVarying)
+
+# Percentages of total deviance explained by each:
+pct_full_model_200plusSptlVarying <- 
+  1 - d3_200plusSptlVarying / d0_200plusSptlVarying
+
+pct_fixed_only_200plusSptlVarying <- 
+  (d0_200plusSptlVarying - d1_200plusSptlVarying) / d0_200plusSptlVarying
+
+pct_sv_only_200plusSptlVarying <- 
+  (d1_200plusSptlVarying - d2_200plusSptlVarying) / d0_200plusSptlVarying
+
+pct_st_only_200plusSptlVarying <- 
+  (d2_200plusSptlVarying - d3_200plusSptlVarying) / d0_200plusSptlVarying
+
+pct_full_model_200plusSptlVarying*100
+# [1] 48.93973
+
+pct_fixed_only_200plusSptlVarying*100
+# [1] 17.71035
+
+pct_sv_only_200plusSptlVarying*100
+# [1] 16.58351
+
+pct_st_only_200plusSptlVarying*100
+# [1] 14.64587
+
+```
+
+# Identify failed fold for spatial varying models
+
+## Load and check failed folds
+
+```{r, load.and.check.failed.folds}
+
+# Load spatial varying model with mld
+cv_deltalognormalLogArea.sptlVarying.str4.200Models <- 
+  readRDS(
+    here(dir, "Final.Results",
+         "S2.fit.200plusLenBin.model_SptlVarying.w.sptl.reml.cv.rds"))
+
+# Check which fold failed
+sanity(cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$model[[1]])
+# Passed
+sanity(cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$model[[2]])
+# Failed
+sanity(cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$model[[3]])
+# Passed
+sanity(cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$model[[4]])
+# Passed
+sanity(cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$model[[5]])
+# Failed
+
+```
+
+## Remove fold two and and summarise the data
+
+```{r, rmse.mae.model.comparisons.for.spatial.varying.partial.cv}
+
+#-----------------------------------------------
+#-----------------------------------------------
+# For spatial varying effects with w/ sptl
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance
+# (RMSE / MAE)
+#-----------------------------------------------
+
+preds_200SptlVarying <- 
+  cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$data %>%
+   group_by(fold_id, keys) %>%
+   summarize(
+     # Total observed biomass at that station (sum of bins)
+     obs_total = sum(Total_W), 
+     # Total predicted biomass (sum of bin-level cv_predicted)
+     pred_total = sum_or_na(cv_predicted),
+     .groups = "drop"
+   )
+
+preds_200SptlVarying_comparison <- preds_200SptlVarying %>%
+  group_by(fold_id) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(diff = sum_obs - sum_pred,
+         Model = "2 LenBins 200 mm cut off (CoVar + sptl + Sptl Varying)")  %>%
+  rename(.folds = fold_id)
+
+#-----------------------------------------------
+# 2. Calculate Global Metrics
+#-----------------------------------------------
+
+final_200SptlVarying_summary <- preds_200SptlVarying %>%
+  summarize(
+    global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+    global_mae  = mean(abs(obs_total - pred_total)),
+    .groups     = "drop" 
+  ) %>%
+  mutate(
+    Model = 
+      "2 LenBins 200 mm cut off (CoVar + sptl + Sptl Varying) - minus folds 2 & 5"
+    )
+
+```
+
+## Remove folds from best fit models to compare against
+
+```{r, best.fit.models.minus.n-folds}
+#-----------------------------------------------
+#-----------------------------------------------
+# For Full Model
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance
+# (RMSE / MAE)
+#-----------------------------------------------
+
+preds_full.clip <- cv_deltalognormal.loglink.reml$data %>%
+  group_by(.folds, keys) %>%
+   summarize(
+     # Total observed biomass at that station (sum of bins)
+     obs_total = sum(Total_W), 
+     # Total predicted biomass (sum of bin-level cv_predicted)
+     pred_total = sum_or_na(cv_predicted),
+     .groups = "drop"
+     )
+
+preds_full.clip_comparison <- preds_full.clip %>%
+  group_by(.folds) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(diff = sum_obs - sum_pred,
+         Model = "Full model (sptl)")
+
+#-----------------------------------------------
+# 2. Calculate Global Metrics
+#-----------------------------------------------
+
+final_full.clip_summary <- preds_full.clip %>%
+  filter(!.folds %in% c(2,5)) %>% # Define fols to exclude
+  summarize(
+    global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+    global_mae  = mean(abs(obs_total - pred_total)),
+    .groups = "drop"
+  ) %>%
+  mutate(Model = "Full model (sptl) - minus folds 2 & 5")
+
+#-----------------------------------------------
+# For Three Length Bin Model
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance
+# (RMSE / MAE)
+#-----------------------------------------------
+
+preds_3bins.clip <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data %>%
+group_by(fold_id, keys) %>%
+   summarize(
+     # Total observed biomass at that station (sum of bins)
+     obs_total = sum(Total_W), 
+     # Total predicted biomass (sum of bin-level cv_predicted)
+     pred_total = sum_or_na(cv_predicted),
+     .groups = "drop"
+     )
+
+preds_3bins.clip_comparison <- preds_3bins.clip %>%
+  group_by(fold_id) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(diff = sum_obs - sum_pred,
+         Model = "3 LenBins (CoVar + sptl)") %>%
+  rename(.folds = fold_id)
+
+#-----------------------------------------------
+# 2. Calculate Global Metrics
+#-----------------------------------------------
+
+final_3bins.clip_summary <- preds_3bins.clip %>%
+  filter(!fold_id %in% c(2,5)) %>% # Define fols to exclude
+  summarize(
+    global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+    global_mae  = mean(abs(obs_total - pred_total)),
+    .groups = "drop"
+  ) %>%
+  mutate(Model = "3 LenBins (CoVar + sptl) - minus folds 2 & 5")
+
+#-----------------------------------------------
+#-----------------------------------------------
+# For 200 Cut-off Models
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance
+# (RMSE / MAE)
+#-----------------------------------------------
+preds_bin200.clip <- 
+  cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data %>%
+  group_by(fold_id, keys) %>%
+   summarize(
+     # Total observed biomass at that station (sum of bins)
+     obs_total = sum(Total_W), 
+     # Total predicted biomass (sum of bin-level cv_predicted)
+     pred_total = sum_or_na(cv_predicted),
+     .groups = "drop"
+     )
+
+preds_bin200.clip_comparison <- preds_bin200.clip %>%
+  group_by(fold_id) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(diff = sum_obs - sum_pred,
+         Model = "2 LenBins 200 mm cut off (CoVar + sptl)") %>%
+  rename(.folds = fold_id)
+
+#-----------------------------------------------
+# 2. Calculate Global Metrics
+#-----------------------------------------------
+
+final_bin200.clip_summary <- preds_bin200.clip %>%
+  filter(!fold_id %in% c(2,5)) %>% # Define fols to exclude
+  summarize(
+    global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+    global_mae  = mean(abs(obs_total - pred_total)),
+    .groups = "drop"
+  ) %>%
+  mutate(Model = "2 LenBins 200 mm cut off (CoVar + sptl) - minus folds 2 & 5")
+
+#-----------------------------------------------
+#-----------------------------------------------
+# For 150 Cut-off Model
+#-----------------------------------------------
+#-----------------------------------------------
+#-----------------------------------------------
+# 1. Station (Fold+Haul) Level Aggregation & Performance
+# (RMSE / MAE)
+#-----------------------------------------------
+preds_bin150.clip <- 
+  cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data %>%
+  group_by(fold_id, keys) %>%
+   summarize(
+     # Total observed biomass at that station (sum of bins)
+     obs_total = sum(Total_W), 
+     # Total predicted biomass (sum of bin-level cv_predicted)
+     pred_total = sum_or_na(cv_predicted),
+     .groups = "drop"
+     )
+
+# 2. Calculate the performance metrics per Fold
+# Use this for your table showing how each fold performed
+preds_bin150.clip_comparison <- preds_bin150.clip %>%
+  group_by(fold_id) %>%
+  summarize(
+    rmse     = sqrt(mean((obs_total - pred_total)^2)),
+    mae      = mean(abs(obs_total - pred_total)),
+    sum_obs  = sum(obs_total),
+    sum_pred = sum(pred_total),
+    .groups  = "drop"
+  ) %>%
+  mutate(diff = sum_obs - sum_pred,
+         Model = "2 LenBins 150 mm cut off (CoVar + sptl)") %>%
+  rename(.folds = fold_id)
+
+#-----------------------------------------------
+# 2. Calculate Global Metrics
+#-----------------------------------------------
+
+final_bin150.clip_summary <- preds_bin150.clip %>%
+  filter(!fold_id %in% c(2,5)) %>% # Define fols to exclude
+  summarize(
+    global_rmse = sqrt(mean((obs_total - pred_total)^2)),
+    global_mae  = mean(abs(obs_total - pred_total)),
+    .groups = "drop"
+  ) %>%
+  mutate(Model = "2 LenBins 150 mm cut off (CoVar + sptl) - minus folds 2 & 5")
+
+```
+
+## Join and save comparison of RMSE and MAE
+
+```{r, join.save.rmse.mae}
+
+test2.clip <- rbind(
+  preds_200SptlVarying_comparison,
+  preds_full.clip_comparison,
+  preds_3bins.clip_comparison,
+  preds_bin200.clip_comparison,
+  preds_bin150.clip_comparison)
+
+# Plotting the RMSE across folds
+rmse.plot2.clip <-
+  ggplot(test2.clip, aes(x = Model, y = rmse, color = Model)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.3) + # Shows the spread across folds
+  geom_jitter(width = 0.1, size = 2) +            # Shows the individual fold scores
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 17)) + # Wraps labels at ~15 chars
+  labs(#title = "Model Predictive Performance across Passed CV Folds",
+       y = "RMSE (Lower is Better)", 
+       x = "") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), # Horizontal & tight line spacing) 
+        legend.position = "none") # Optional: hides legend if color already matches x-axis labels)
+
+rmse.plot2.clip
+
+ggsave2(filename = "SpatialVaryinglengthBinSelectionViaRMSE.jpeg",
+        plot = rmse.plot2.clip, 
+        device ="jpeg",
+        path = here(dir, "Final.Figures"),
+        dpi = 1200, width = 29, height = 21,
+        unit = "cm", limitsize = FALSE)
+
+fwrite(test,
+       here(dir, "Final.Results",
+            "CV_Fold_StatisticsTableForSpatialVaryingLengthBinSelection.csv"),
+       sep = ",")
+
+#---------------------------------
+# For summary table
+#---------------------------------
+
+test3.clip <- rbind(final_200SptlVarying_summary,
+                    final_full.clip_summary,
+                    final_3bins.clip_summary,
+                    final_bin200.clip_summary, 
+                    final_bin150.clip_summary
+                    )
+
+test3.clip <- test3.clip %>%
+  select(
+    Model,
+    `Global CV RMSE` = global_rmse,
+    `Global CV MAE`  = global_mae
+  ) %>%
+  mutate(
+    ref_rmse = final_full.clip_summary$global_rmse,
+    ref_mae = final_full.clip_summary$global_mae
+  ) %>%
+  # Calculate % difference relative to final_full_summary
+  mutate(
+    `% Δ RMSE` = (`Global CV RMSE` - ref_rmse) / ref_rmse * 100,
+    `% Δ MAE`  = (`Global CV MAE`  - ref_mae)  / ref_mae  * 100
+  ) %>%
+  # Optional: sort best to worst by RMSE
+  arrange(`Global CV RMSE`) %>%
+  select(-c(ref_rmse, ref_mae))
+
+View(test3.clip)
+
+fwrite(test3.clip, 
+       here(dir, "Final.Results",
+            "Global_CV_SummaryTableForSpatialVaryingLengthBinSelection.csv"),
+       sep = ",")
+
+```
+
+
