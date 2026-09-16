@@ -9,10 +9,11 @@
 shared/
 
 #--------------------------------------
-# Old data 
+#  Remove data Old data 
 #--------------------------------------
 Data/ATM CPS Survey/Scratch/
 Data/Shapefiles/Scratch/
+Data/
 
 #--------------------------------------
 # File is too large (EEZ boundary)
