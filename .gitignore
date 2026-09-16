@@ -1,0 +1,62 @@
+#--------------------------------------
+# R User file associations
+#--------------------------------------
+.Rproj.user*
+.Rhistory*
+.RData*
+.RDataTmp*
+.Ruserdata*
+shared/
+
+#--------------------------------------
+# Old data 
+#--------------------------------------
+Data/ATM CPS Survey/Scratch/
+Data/Shapefiles/Scratch/
+
+#--------------------------------------
+# File is too large (EEZ boundary)
+#--------------------------------------
+Data/Shapefiles/gshhg-shp-2.3.7*
+
+#--------------------------------------
+# ROMS hindcast data sets (100MiB limit exceeded)
+# --------------------------------------
+Data/ROMS2/
+
+#--------------------------------------
+# Code outputs
+#--------------------------------------
+Final.Figures/
+*.jpg
+*.rds
+*.png
+*.csv
+
+#--------------------------------------
+# Non ownership data and / or restricted 
+# --------------------------------------
+Data/IPES plus Historic Surveys Canada/
+IPES.and.Canadian.Data.Rmd
+cdo-2.5.3.tar.gz
+FSIII SDM Extraction Codes to Check/
+ExampleRun/
+SSMSE.Base.Model.Data/
+Sources/
+
+#--------------------------------------
+# Version control software
+#--------------------------------------
+bfg-1.15.0.jar
+
+#--------------------------------------
+# Notes, Presentations, and Test code
+#--------------------------------------
+Scratch/
+Final.Figures/Scratch/
+Final.Results/Scratch/
+Final.Model.Scripts/Scratch/
+PastPresentations/
+Notes/
+*.pptx
+*.odp
