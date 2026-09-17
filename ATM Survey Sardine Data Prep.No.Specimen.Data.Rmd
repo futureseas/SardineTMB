@@ -50,14 +50,14 @@ dim(US.specimen.dat.clean)
 # [1] 21105  26
 
 # Only keep summer data for this check
-test <- US.specimen.dat.clean %>% 
+test <- US.specimen.dat.clean |> 
   filter(cruise > 200804 & cruise < 202103)
 unique(test$cruise)
 #  [1] 200807 200904 201004 201104 201204 201207 201304 201307 201404 201407
 # [11] 201504 201507 201604 201607 201704 201707 201807 201907 201208
 
-test2 <- test %>% 
-  filter(grepl("07$|08$", as.character(cruise))) %>%
+test2 <- test |> 
+  filter(grepl("07$|08$", as.character(cruise))) |>
   mutate(cruise = as.numeric(cruise))
 
 length(unique(test2$keys))
@@ -94,7 +94,7 @@ names(US.specimen.dat.clean)[c(20:26)]
 # [7] "Species_weight"  
 
 # Add placeholder values
-no.specimen.dat <- no.specimen.dat %>%
+no.specimen.dat <- no.specimen.dat |>
   mutate(latitude = NA,
          longitude = NA,
          specimen_number = NA,
@@ -117,7 +117,7 @@ dim(Haul.weights.sar.no.length)
 
 # Add like column
 Haul.weights.sar.no.length <- 
-  Haul.weights.sar.no.length %>%
+  Haul.weights.sar.no.length |>
   mutate(Species_weight = subsample_weight+remaining_weight)
 
 ```
@@ -141,7 +141,7 @@ names(Haul.weights.sar.no.length)[27:28]
 
 # Remove unnecessary columns
 Haul.weights.sar.no.length <- 
-  Haul.weights.sar.no.length %>%
+  Haul.weights.sar.no.length |>
   select(-c(quality.indic, FID)) 
 
 # Find if there are any columns in no.specimen.dat we need to check
@@ -154,7 +154,7 @@ names(no.specimen.dat)[14]
 # [1] "keys.temp"
 
 # Add missing column
-Haul.weights.sar.no.length <- Haul.weights.sar.no.length %>%
+Haul.weights.sar.no.length <- Haul.weights.sar.no.length |>
   mutate(keys.temp = paste(cruise, ship, haul, collection,
                            itis_tsn, equilibrium_time.utc, sep = "")
          )
@@ -174,7 +174,7 @@ These are hauls where we have complete observations of sardines.
 ```{r, identify.hauls.to.match.with}
 
 # First filter data to only include sardine hauls
-keys.to.match <- US.specimen.dat.clean %>%
+keys.to.match <- US.specimen.dat.clean |>
   filter(scientific_name == "Sardinops sagax")
 
 # Find the number of hauls where sardine are present (remember to add 
@@ -187,7 +187,7 @@ identical(keys.to.match$Species_weight,
 # [1] FALSE
 
 # Check if there are shared keys before proceeding
-test.keys <- Hauls2Fill %>%
+test.keys <- Hauls2Fill |>
   filter(keys %in% keys.to.match$keys)
 
 dim(test.keys)
@@ -196,7 +196,7 @@ dim(test.keys)
 # If there are any keys present,
 # they have already been taken care of 
 # in the redistribution of weight.
-identical.keys <- keys.to.match %>%
+identical.keys <- keys.to.match |>
   filter(keys %in% test.keys$keys)
 
 # View(test.keys)
@@ -204,7 +204,7 @@ identical.keys <- keys.to.match %>%
 
 # Remove the entries already accounted
 # for from Hauls2Fill
-Hauls2Fill.clean <- Hauls2Fill %>%
+Hauls2Fill.clean <- Hauls2Fill |>
   filter(!keys %in% identical.keys$keys)
 
 dim(Hauls2Fill.clean)
@@ -225,14 +225,14 @@ The objective here is to find the closest corresponding haul in time and space. 
 #------------------------------------
 Hauls2Fill.clean_sf <- 
   make_transect_sf(
-  Hauls2Fill.clean, crs = 4326) %>%
-  mutate(DatSource = "2Fill") %>%
-  distinct() %>%
-  group_by(keys, DatSource, geometry) %>%
+  Hauls2Fill.clean, crs = 4326) |>
+  mutate(DatSource = "2Fill") |>
+  distinct() |>
+  group_by(keys, DatSource, geometry) |>
   # Create a single group id and assign it to all rows in that group
-  mutate(index = cur_group_id()) %>%
-  ungroup() %>%
-  st_transform(., crs = aea_custom) %>%
+  mutate(index = cur_group_id()) |>
+  ungroup() |>
+  st_transform(., crs = aea_custom) |>
   # Remove columns to fill
   select(-c(weight, standard_length, specimen_number,
             subsample_count))
@@ -245,12 +245,12 @@ unique(is.na(Hauls2Fill.clean_sf))
 #------------------------------------
 
 # Create unique grouping key - place holder to join on later
-keys.to.match.temp <- keys.to.match %>%
-  make_transect_sf(., crs = 4326) %>%
-  distinct() %>%
-  group_by(keys, geometry) %>%
+keys.to.match.temp <- keys.to.match |>
+  make_transect_sf(crs = 4326) |>
+  distinct() |>
+  group_by(keys, geometry) |>
   # Create a single group id and assign it to all rows in that group
-  mutate(index = cur_group_id()) %>%
+  mutate(index = cur_group_id()) |>
   ungroup()
 
 identical(keys.to.match.temp$subsample_weight,
@@ -258,14 +258,14 @@ identical(keys.to.match.temp$subsample_weight,
 # [1] FALSE
 
 # For creation of the distance matrices
-knownDat_sf <- keys.to.match.temp %>%
-  mutate(DatSource = "source") %>%
-  distinct() %>%
-  group_by(keys, geometry, DatSource) %>%
+knownDat_sf <- keys.to.match.temp |>
+  mutate(DatSource = "source") |>
+  distinct() |>
+  group_by(keys, geometry, DatSource) |>
   # Create a single group id and assign it to all rows in that group
-  mutate(index = cur_group_id()) %>%
-  ungroup() %>% 
-  st_transform(., crs = aea_custom) %>%
+  mutate(index = cur_group_id()) |>
+  ungroup() |> 
+  st_transform(., crs = aea_custom) |>
   select(index, geometry, equilibrium_time.utc, 
          DatSource) 
 
@@ -356,7 +356,7 @@ Hauls2Fill.clean_sf$nearest_tim <-
 
 # Convert geometry of the match for record keeping
 matched_geom <- 
-  st_geometry(knownDat_sf)[nearest_index] %>% 
+  st_geometry(knownDat_sf)[nearest_index] |> 
   st_transform(4326)
 
 Hauls2Fill.clean_sf$nearest_haul_loc <- 
@@ -365,7 +365,7 @@ Hauls2Fill.clean_sf$nearest_haul_loc <-
 #---------------------------------------------------------
 # 3. Final Summary Column (Human Readable)
 #---------------------------------------------------------
-Hauls2Fill.clean_sf <- Hauls2Fill.clean_sf %>%
+Hauls2Fill.clean_sf <- Hauls2Fill.clean_sf |>
   mutate(match_summary = 
            paste0("Dist: ", round(match_dist_meters/1000, 2), 
                   "km | Time: ", round(match_diff_seconds/60, 1),
@@ -385,8 +385,8 @@ final_df <- st_drop_geometry(Hauls2Fill.clean_sf)
 # 1. Prepare the Donor Pool (Individual Fish)
 # This pulls the actual measured fish records 
 # from your source data
-donor_pool <- keys.to.match.temp %>%
-  st_drop_geometry() %>%
+donor_pool <- keys.to.match.temp |>
+  st_drop_geometry() |>
   select(index, 
          standard_length, 
          subsample_count,
@@ -397,11 +397,11 @@ donor_pool <- keys.to.match.temp %>%
 # 2. Join and Scale (The "Expansion" Step)
 # We take final_df (one row per haul) and join it 
 # to donor_pool (many rows per haul)
-final_expanded_specimens <- final_df %>%
+final_expanded_specimens <- final_df |>
   # Match the 'nearest_key' found by your distance
   # matrix to the donor index
   left_join(donor_pool, by = c("nearest_key" = "index"),
-            relationship = "many-to-many") %>%
+            relationship = "many-to-many") |>
   
   # 3. Apply the proportional scaling
   # We adjust the donor fish weight to fit your target 
@@ -419,13 +419,13 @@ final_expanded_specimens <- final_df %>%
 
 ```{r, summary}
 
-Hauls2Fill.clean_sf.f.summary <- final_expanded_specimens %>%
+Hauls2Fill.clean_sf.f.summary <- final_expanded_specimens |>
   select(keys, cruise, ship, haul, collection, start_latitude,
          start_longitude, stop_latitude, stop_longitude,
          equilibrium_time.utc, index, match_combined_score, 
          match_dist_meters, match_diff_seconds, nearest_key,
-         nearest_tim, nearest_haul_loc, match_summary) %>%
-  distinct() %>%
+         nearest_tim, nearest_haul_loc, match_summary) |>
+  distinct() |>
   st_drop_geometry()
 
 # View(Hauls2Fill.clean_sf.f.summary)
@@ -465,15 +465,15 @@ names(final_expanded_specimens)[c(13,24:32,35:38)]
 ## the original Species_weight, and the synthetic
 ## individual weights
 final_expanded_specimens.clean <-
-  final_expanded_specimens %>% 
+  final_expanded_specimens |> 
   select(-c(DatSource, index, match_combined_score, 
             match_dist_meters, match_diff_seconds,
             nearest_key, nearest_tim, nearest_haul_loc,
-            match_summary, weight_donor, sub_wgt_donor)) %>%
+            match_summary, weight_donor, sub_wgt_donor)) |>
   rename(weight = synthetic_indiv_weight)
 
 # Add keys.temp to US.specimen.dat.clean file
-US.specimen.dat.clean <- US.specimen.dat.clean %>%
+US.specimen.dat.clean <- US.specimen.dat.clean |>
   mutate(keys.temp = paste(cruise, ship, haul, collection,
                            itis_tsn, equilibrium_time.utc, 
                            sep = "")
@@ -491,17 +491,17 @@ allDat <- rbind(final_expanded_specimens.clean,
                 US.specimen.dat.clean)
 
 # Verify that these entries correspond to other species
-test.na.length <- allDat %>%
+test.na.length <- allDat |>
   filter(is.na(standard_length) & 
            scientific_name == "Sardinops sagax")
 
 unique(test.na.length)
 
 dim(allDat)
-# [1] 21347  26
+# [1] 21347  27
 
-allDat <- allDat %>%
-  mutate(date = date(equilibrium_time.utc)) %>%
+allDat <- allDat |>
+  mutate(date = date(equilibrium_time.utc)) |>
   mutate(Year = year(date),
          Month = month(date))
 
@@ -518,8 +518,8 @@ fwrite(
 ```{r, spring.summer.unqiue.months}
 
 check.month <- fread(here(dir, "Data", survey.path, "2003.2024.ATM.Survey.with.integrated.specimen.data.csv"), sep = ",")
-unique(check.month$Month)
-# [1]  7  4  8  3  5  6  9 10 11
+sort(unique(check.month$Month))
+# [1] 3 4 5 6 7 8 9 10 11
 
 sort(unique(check.month$cruise))
 #  [1] 200307 200403 200404 200407 200503 200504 200604 200704 200706 200804 200807 200904 201004 201104 201204 201207
@@ -530,8 +530,8 @@ sort(unique(check.month$cruise))
 # For summer survey
 #----------------------
 
-check.month.summer <- check.month %>% 
-  filter(cruise > 200804 & cruise < 202103) %>%
+check.month.summer <- check.month |> 
+  filter(cruise > 200804 & cruise < 202103) |>
   filter(!cruise %in% c(200904, 201004, 201104, 201204, 201304, 201404, 
                         201504, 201604, 201704))
 
@@ -545,8 +545,8 @@ sort(unique(check.month.summer$Month))
 # For spring survey
 #----------------------
 
-check.month.spring <- check.month %>% 
-  filter(cruise > 200804 & cruise < 202103) %>%
+check.month.spring <- check.month |> 
+  filter(cruise > 200804 & cruise < 202103) |>
   filter(!cruise %in% check.month.summer$cruise)
 
 sort(unique(check.month.spring$cruise))

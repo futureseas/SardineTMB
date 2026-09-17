@@ -9,11 +9,12 @@
 shared/
 
 #--------------------------------------
-#  Remove data Old data 
+#  Remove data Old data and functions
 #--------------------------------------
 Data/ATM CPS Survey/Scratch/
 Data/Shapefiles/Scratch/
 Data/
+dropped.functions.R
 
 #--------------------------------------
 # File is too large (EEZ boundary)

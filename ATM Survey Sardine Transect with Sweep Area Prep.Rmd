@@ -17,10 +17,7 @@ rm(list=ls())
 gc()
 
 load.lib <- c("tidyverse", "data.table", "cowplot", "sf", 
-              "rnaturalearth", "rnaturalearthhires", 
-              "r4ss", "zoo", "janitor", 
-              "suncalc", "here", "furrr", 
-              "geosphere"
+              "zoo", "suncalc", "here", "furrr", "geosphere"
               )
 
 install.lib <- load.lib[!load.lib %in% installed.packages()]
@@ -49,9 +46,9 @@ full.series <-
   fread(
     here(dir, "Data", "ATM CPS Survey",
          "2003.2024.ATM.Survey.with.integrated.specimen.data.csv"), 
-        sep = ",") %>%
+        sep = ",") |>
   # convert mm to cm to be able to use VBGF
-  mutate(standard_length = standard_length/10) %>%
+  mutate(standard_length = standard_length/10) |>
   distinct()
 
 length(unique(full.series$collection))
@@ -84,15 +81,15 @@ Note that for initial plots, CPUE was defined as kg/hr, but since we are estimat
 
 ```{r, convert.POSIXct.object}
 
-full.series.sf <- trip_rect %>%
+full.series.sf <- trip_rect |>
   group_by(cruise, ship, haul, equilibrium_time.utc, collection, 
-           geometry) %>%
+           geometry) |>
   mutate(haulback_time.pacific = 
            as.POSIXct(haulback_time.utc, 
                       tz = "America/Los_Angeles"),
          equilibrium_time.pacific = 
            as.POSIXct(equilibrium_time.utc, 
-                      tz = "America/Los_Angeles")) %>%
+                      tz = "America/Los_Angeles")) |>
   ungroup() 
 
 head(unique(full.series.sf$haulback_time.utc))
@@ -102,202 +99,14 @@ head(unique(full.series.sf$equilibrium_time.pacific))
   
 ```
 
-# Identify length and age compositions
-
-There are many different values used to assess length at age in the region and high levels of variability between individuals, years, seasons, and cohorts. For example *K* was historically nearly double that of the most recent publication by Wildermuth et al., 2024. In one such as, off the coast of California ([Phillips, J.B., 1948. Growth of the sardine *Sardinops caerulea* 1941-42 through 1945-47. Calif. Dept. Fish and Game. Calif. Fish. Bull. 71:33 p]) found *L(inf)* to be 31 cm and *K (Female)* 0.460. 
-
-## Load previous OM output
-
-Below, we investigate the potential of using the Wildermuth et al., 2024 values for L(inf), K, and t0 in the extended data set with all lengths considered. We also utilizing the weight length relationship used by Wildermuth et al., 2024 to portion catch at length for the US and Canadian Surveys in cases where observations are missing and or when total Sardine catch is in disatreement with the sampled weight estimates.
-
-```{r, load.ss.growth.params}
-
-# Where ss output files are
-model_dir <- here(dir, "Data", "SSMSE.Base.Model.Data",
-                  "start2001", "constGrowthMidSteepNewSelex_OM")
-
-# Read ssouput file
-OM_age.length <- SSgetoutput(dir = file.path(model_dir))
-
-```
-
-## Extract length at age relationship parameters (VBGF)
-
-```{r, extract.ss.age.length.params}
-
-# How many age classes were fed into the model (model forecasts the rest)
-OM_age.length$replist1$agebins
-# [1] 0 1 2 3 4 5 6 7 8
-
-#------------------------------------------------------------------
-# Below are the values needed for VBGF
-#------------------------------------------------------------------
-
-# Estimated age
-Linf <- OM_age.length$replist1$Growth_Parameters$Linf
-Linf
-# [1] 25.153
-
-K <- OM_age.length$replist1$Growth_Parameters$K
-K
-# [1] 0.273111
-
-# A1 is the starting length (true age 0 values)
-A1 <- OM_age.length$replist1$Growth_Parameters$A1
-A1 
-# [1] 0.5
-
-# A2 is either fixed at a theoretical maximum or inf (999)
-A2 <- OM_age.length$replist1$Growth_Parameters$A2
-A2 
-# [1] 999
-
-# Smallest observed length in the data set
-L_a_A1 <- OM_age.length$replist1$Growth_Parameters$L_a_A1
-L_a_A1
-# [1] 13.1744
-
-# You can also index them all at once
-OM_age.length$replist1$Growth_Parameters
-
-#------------------------------------------------------------------
-# To find t0, which is estimated in the ss model rather than explicit
-#------------------------------------------------------------------
-
-# Equation used
-t0 <- A1 + (log(1-L_a_A1/Linf))/K
-t0
-# [1] -2.216315
-
-# Undefined parameter in the model handbook thought to be t0
-A_a_L0 <- OM_age.length$replist1$Growth_Parameters$A_a_L0
-A_a_L0
-# [1] -2.2163
-
-```
-
-## Assess confidence and error in the model
-
-These will be useful in reporting error around the continuous growth assumption used. Note this may be replaced with fleet grouped Age Length Keys (ALKs).
-
-```{r, extract.ss.age.length.model.evaluations}
-
-# Things to look up later for types of errors (!= fleets, != # of params)
-OM_age.length$replist1$age_error_mean
-OM_age.length$replist1$age_error_sd
-
-# Returns the Maximum Likelihood Estimates (MLE)
-OM_age.length$replist1$growthseries[1,5:15]
-
-# Create a vector of mle values
-mle.vals <- c(t(OM_age.length$replist1$growthseries[1,5:15]))
-
-# Create a vector of ages
-age.vals <- seq(0,10,1)
-
-# Combine in a data frame ages and mle values
-ss.age.len <- data.frame(mle.vals, age.vals)
-
-# To view parameterizations and associated sd values
-OM_age.length$replist1$parameters 
-
-```
-
-## Extract length weight relationship 
-
-This is located in the control file growth parameters block.
-So for W = aL^b, 
-*a* = *Wtlen_1_Fem* = *WtLen1* (The intercept/scaling factor)
-*b* = *Wtlen_2_Fem* = *WtLen2* (The exponent/allometric growth parameter)
-
-```{r, extract.ss.lengthweight.params}
-
-# Note that in Stock Synthesis the Length Weight values are in cm and kg
-
-# For a
-a <- OM_age.length$replist1$Growth_Parameters$WtLen1
-a
-# [1] 7.5242e-06]
-
-# For b
-b <- OM_age.length$replist1$Growth_Parameters$WtLen2
-b
-# [1] 3.2332
-
-```
-
-## Estimate age
-
-Use the values extracted from the ss model for pacific sardine.
-
-```{r, apply.inverse.vbgg}
-
-# Apply VBGF
-Sardine <- full.series.sf %>% 
-  filter(scientific_name == "Sardinops sagax") %>%
-  group_by(keys, equilibrium_time.pacific, 
-           collection, geometry) %>%
-  mutate(age = round((-1/K)*log(1-(standard_length/Linf)) + 
-                       A_a_L0)) %>% 
-  ungroup() %>%
-  group_by(age) %>%
-  mutate(mean.length.age = mean(standard_length)) %>%
-  ungroup() %>%  
-  distinct()
-
-# Explore NaN values
-sardine.nans.pt1 <- Sardine %>%
-  filter(is.na(age))
-
-# How many observations are lost
-dim(sardine.nans.pt1)
-# [1] 1122  34
-
-# What lengths are not represented
-sardine.nans.pt2 <- sardine.nans.pt1 %>%
-  distinct(standard_length)
-
-# Vector of lengths not represented
-sort(c(t(sardine.nans.pt2)))
-#  [1] 25.2 25.3 25.4 25.5 25.6 25.7 25.8 25.9 26.0 26.1 26.2
-# [12] 26.3 26.4 26.5 26.6 26.7 26.8 26.9 27.0 27.1 27.2 27.3
-# [23] 27.4 27.5 27.6 27.7 27.8 27.9 28.0 28.1 28.2 28.4 28.9
-# [34] 29.1 29.2
-
-# Plot age length per haul, average age per haul, and ss mle values 
-# (when excluding larger lengths from the data)... 
-# note a sensitivity analysis is still needed
-age.length.plot <-
-  ggplot() + 
-  geom_point(data = Sardine, aes(x=age, y=standard_length), 
-             col = "black") +
-  geom_line(data = Sardine, aes(x=age, y=mean.length.age), 
-            col = "red") +
-  geom_line(data=ss.age.len, aes(x=age.vals, y=mle.vals), 
-            col = "blue") + 
-  scale_y_continuous(breaks = seq(0, 31, by = 2)) +
-  scale_x_continuous(breaks = seq(0, 20, by = 1)) +
-  ylab("Standard Length (cm)") +
-  xlab("Estimate Age (yr)") +
-  theme_classic()
-
-age.length.plot
-
-ggsave2(filename="age.length.keys.jpeg",
-        plot=age.length.plot, device="jpeg", 
-        path=paste(dir, "/Final.Figures",sep=""), 
-        dpi=1200, width = 29,
-        height=21, unit="cm", limitsize = FALSE)
-
-```
-
 # Define length bin definitions for Sardine only
 
 Because ageing is uncertain, propose length bins where the first 100 mm are grouped (considered age 0), and where every 2.25 cm is added.
 
 ```{r, length.bin.defs}
 
-len.bins <- Sardine
+len.bins <- full.series.sf |>
+  filter(scientific_name == "Sardinops sagax")
 
 head(len.bins)
 
@@ -308,101 +117,42 @@ range(len.bins$standard_length)
 # Check lowest intervals
 #------------------------------------------------------------------
 
-len_less150 <- len.bins %>%
-  filter(standard_length < 15.0) %>%
+len_less150 <- len.bins |>
+  filter(standard_length < 15.0) |>
   mutate(len.bin = "less150")
 
 sort(unique(len_less150$age))
 # [1] -2 -1  0  1
 
-len_150to200 <- len.bins %>%
-  filter(standard_length >= 15.0 & standard_length < 20.0) %>%
+len_150to200 <- len.bins |>
+  filter(standard_length >= 15.0 & standard_length < 20.0) |>
   mutate(len.bin = "150to200")
 
 sort(unique(len_150to200$age))
 # [1] 1 2 3 4
 
-len200plus <- len.bins %>%
-  filter(standard_length >= 20.0) %>%
+len200plus <- len.bins |>
+  filter(standard_length >= 20.0) |>
   mutate(len.bin = "200+")
-
-sort(unique(len200plus$age))
-# [1] 10
-
-#------------------------------------------------------------------
-# Re-code negative age to 0
-#------------------------------------------------------------------
-
-len_less150.negs <- len_less150 %>%
-  filter(age < 0) %>%
-  mutate(age = 0)
-
-len_less150.0s <- len_less150 %>%
-  filter(age == 0)
-
-len_less150.new <- rbind(len_less150.negs,  len_less150.0s)
 
 #------------------------------------------------------------------
 # Join data sets 
 #------------------------------------------------------------------
 
-len.bins2 <- rbind(len_less150.new, len_150to200, len200plus)
+len.bins2 <- rbind(len_less150, len_150to200, len200plus)
 
 ```
 
-# Re-code Sardines NaNs and to 13+ ages to 10+
-
-```{r, recode.NaN.and.13+ages}
-
-len.bins2.ok <- len.bins2 %>%
-  filter(!is.na(age) & age < 10)
-
-len.bins2.no <- len.bins2 %>%
-  filter(age > 9) %>%
-  mutate(age = 10)
-
-len200plus <- len200plus %>%
-  filter(is.na(age)) %>%
-  mutate(age = 10)
-
-final_len.bins2 <- len.bins %>%
-  mutate(
-    # 1. Handle the "less than 150" age logic
-    age = if_else(standard_length < 15.0 & age < 0, 0, age),
-    
-    # 2. Handle the "10+" and "NA" logic
-    age = case_when(
-      age >= 10 ~ 10,
-      is.na(age) & standard_length >= 20.0 ~ 10,
-      TRUE ~ age
-    ),
-    
-    # 3. Create your bin labels
-    len.bin = case_when(
-      standard_length < 15.0 ~ "less150",
-      standard_length >= 15.0 & 
-        standard_length < 20.0 ~ "150to200",
-      standard_length >= 20.0 ~ "200+",
-      TRUE ~ NA_character_
-    )
-  ) %>%
-  # Filter out only the NAs you actually don't want
-  filter(!is.na(age))
-
-# Check that the code no longer drops length sizes
-sort(unique(final_len.bins2$standard_length))
-
-```
 
 ## Extract original weight by length bin per season
 
 ```{r, raw.weight.by.length.bin.season}
 
 # Define seasons
-season.len.weight.raw <- final_len.bins2 %>%
-  filter(scientific_name == "Sardinops sagax") %>%
-  st_drop_geometry() %>%
-  mutate(date = date(equilibrium_time.utc)) %>%
+season.len.weight.raw <- len.bins2 |>
+  filter(scientific_name == "Sardinops sagax") |>
+  st_drop_geometry() |>
+  mutate(date = date(equilibrium_time.utc)) |>
   mutate(Year = year(date),
          Season = case_when(
            month(date) %in% c(3:5) ~ "Spring",
@@ -413,12 +163,12 @@ season.len.weight.raw <- final_len.bins2 %>%
 #-----------------------------------------
 # Extract and save spring catches
 #-----------------------------------------
-season.weight.raw.Spring <- season.len.weight.raw %>%
-  filter(Season == "Spring") %>%
-  group_by(Year) %>%
+season.weight.raw.Spring <- season.len.weight.raw |>
+  filter(Season == "Spring") |>
+  group_by(Year) |>
   summarise(Total_Catch_kg = sum(Species_weight), 
             .groups = "keep"
-  ) %>%
+  ) |>
   ungroup()
 
 fwrite(season.weight.raw.Spring, 
@@ -429,12 +179,12 @@ fwrite(season.weight.raw.Spring,
 #-----------------------------------------
 # Extract and save summer catches
 #-----------------------------------------
-season.weight.raw.Summer <- season.len.weight.raw %>%
-  filter(Season == "Summer") %>%
-  group_by(Year, Season) %>%
+season.weight.raw.Summer <- season.len.weight.raw |>
+  filter(Season == "Summer") |>
+  group_by(Year, Season) |>
   summarise(Total_Catch_kg = sum(Species_weight), 
             .groups = "keep"
-  ) %>%
+  ) |>
   ungroup()
 
 fwrite(season.weight.raw.Summer, 
@@ -456,11 +206,11 @@ fwrite(season.weight.raw.Summer,
 # 1. Define Haul Keys
 haul_keys <- c("keys")
 
-final_hybrid_reconstruction <- final_len.bins2 %>%
+final_hybrid_reconstruction <- len.bins2 |>
   # --- Step A: Calculate Theoretical Baseline ---
-  mutate(W_theory = 7.52e-06 * standard_length^3.23) %>%
+  mutate(W_theory = 7.52e-06 * standard_length^3.23) |>
   
-  group_by(across(all_of(haul_keys))) %>%
+  group_by(across(all_of(haul_keys))) |>
   mutate(
     # How much do our measured fish deviate from the 
     # 'textbook' weight?
@@ -484,10 +234,10 @@ final_hybrid_reconstruction <- final_len.bins2 %>%
     # measured lengths)
     Subsample_Total_W = sum(W_best_estimate),
     Haul_Total_Catch_W = first(Species_weight)
-  ) %>%
+  ) |>
   
   # --- Step B: Partition the Catch ---
-  group_by(across(all_of(c(haul_keys, "len.bin")))) %>%
+  group_by(across(all_of(c(haul_keys, "len.bin")))) |>
   mutate(
     Bin_Subsample_W = sum(W_best_estimate),
     Bin_Prop = Bin_Subsample_W / first(Subsample_Total_W),
@@ -498,22 +248,24 @@ final_hybrid_reconstruction <- final_len.bins2 %>%
     # Final 'Scaled' Individual Weight 
     # (Sum of these = Species_weight)
     Indiv_W_Scaled = Bin_Haul_Biomass / n()
-  ) %>%
+  ) |>
   ungroup()
 
 # View(final_hybrid_reconstruction)
 
-testyears <- final_hybrid_reconstruction %>% filter(Month %in% c(6:9) & Year %in% c(2008,2012:2019))
+testyears <- final_hybrid_reconstruction |> 
+  filter(Month %in% c(6:9) & Year %in% c(2008,2012:2019))
 range(round(testyears$Condition_Factor, 2))
 # [1] 0.00 1.86
 
-unique(is.na(final_len.bins2))
+unique(is.na(len.bins2))
+
 #---------------------------------------------------------------
 # Second, define the expansion factor and summarise the output
 #---------------------------------------------------------------
 
 final_production_data <- 
-  final_hybrid_reconstruction %>%
+  final_hybrid_reconstruction |>
   mutate(
     # 1. BIOLOGICAL WEIGHT: This is the fish's actual 
     # size (e.g., ~0.08 kg)
@@ -548,13 +300,13 @@ sum(final_production_data$Scaled_Biomass_Contribution) - sum(unique(final_produc
 # The scaled biomass is not capturing the observed
 # weights well. Check if the issue lies in the fish weight 
 # data wrangling step
-error_report <- final_production_data %>%
-  group_by(across(all_of(haul_keys))) %>%
+error_report <- final_production_data |>
+  group_by(across(all_of(haul_keys))) |>
   summarise(
     Expected = first(Species_weight),
     Actual = sum(Indiv_W_Scaled),
     Diff = Expected - Actual
-  ) %>%
+  ) |>
   filter(abs(Diff) > 0.001)
 
 # View(error_report)
@@ -567,10 +319,9 @@ error_report <- final_production_data %>%
 # not representative of the haul
 summary(final_production_data$Expansion_Factor)
 
-# That Max of 2.367e+04 (23,670x) is the "flashing yellow light" in your data. It means that for at least one haul, a single measured fish (or a tiny gram-sized subsample) is being used to represent over 23 tons of catch.
+# That Max of 2.367e+04 (23,670x) means that for at least one haul, a single measured fish (or a tiny gram-sized subsample) is being used to represent over 23 tons of catch.
 
 # While the math is correct, the uncertainty in those specific rows is massive. If that one fish happened to be an outlier, it’s now a 23-ton outlier.
-
 
 # What the Summary tells us:
 
@@ -585,14 +336,14 @@ summary(final_production_data$Expansion_Factor)
 # See if the culprit year is 2007, 
 # this was an issue earlier too
 final_production_data.minus.2007 <- 
-  final_production_data %>%
+  final_production_data |>
   filter(Year != 2007)
 
 summary(final_production_data.minus.2007$Expansion_Factor)
 
 # What the Summary tells us:
 
-# The "Gold Standard" Range: Your Median (2.89) and 3rd Quartile (12.08) are excellent. This tells you that for 75% of your data, the expansion factor is 12 or less. This is highly reliable sampling.
+# The Median (2.89) and 3rd Quartile (12.08) are excellent. This tells us that for 75% of your data, the expansion factor is 12 or less. This is highly reliable sampling.
 
 # The Lower Bound (0.48): This still suggests some "over-sampling" where the measured basket was recorded as heavier than the total catch. This often happens if the "Total Weight" was an estimate by the captain while the "Subsample" was weighed on a high-precision scale.
 
@@ -602,21 +353,21 @@ summary(final_production_data.minus.2007$Expansion_Factor)
 
 # Check if expansion factors larger than 500 are common
 biomass_audit.minus.2007 <- 
-  final_production_data.minus.2007 %>%
-  st_drop_geometry() %>%
+  final_production_data.minus.2007 |>
+  st_drop_geometry() |>
   mutate(Expansion_Bin = 
            cut(Expansion_Factor,
                breaks = c(0, 10, 100, 1000, Inf),
                labels = c("1-10 (High)", 
                           "10-100 (Med)", 
                           "100-1000 (Low)", 
-                          ">1000 (Extreme)"))) %>%
-  group_by(Expansion_Bin) %>%
+                          ">1000 (Extreme)"))) |>
+  group_by(Expansion_Bin) |>
   summarise(
     Record_Count = n(),
     Total_Biomass_Represented = 
       sum(Scaled_Biomass_Contribution)
-  ) %>%
+  ) |>
   mutate(Percent_of_Total_Biomass = 
            Total_Biomass_Represented / 
            sum(Total_Biomass_Represented) * 100)
@@ -629,15 +380,15 @@ fwrite(biomass_audit.minus.2007,
        sep = ",")
 
 top_influence_hauls <- 
-  final_production_data.minus.2007 %>%
-  filter(Expansion_Factor > 100) %>%
+  final_production_data.minus.2007 |>
+  filter(Expansion_Factor > 100) |>
   group_by(keys, cruise, ship, haul, collection,
-           equilibrium_time.utc) %>%
+           equilibrium_time.utc) |>
   summarise(
     Total_Weight_kg = first(Species_weight),
     Records_Measured = n(),
-    Expansion = first(Species_weight) / first(Subsample_Total_W)
-  ) %>%
+    Expansion = first(Species_weight) / first(Subsample_Total_W),
+    .groups = "drop") |>
   arrange(desc(Total_Weight_kg))
 
 # View(top_influence_hauls)
@@ -654,23 +405,25 @@ Hauls2Fill.clean_sf.f.summary <-
   )
 
 Hauls2Fill.clean_sf.f.summary
-# None of the top influencer hauls were estimated
+# None of the top influenced hauls were estimated
 
 #-----------------------------
 # Check that for every haul, the sum of the 
 # Scaled_Biomass_Contribution is equal to the Species_weight
-test.total.bios <- final_production_data %>%
-  group_by(keys, Species_weight) %>%
-  summarise(TotScaleBio = round(
-    sum(Scaled_Biomass_Contribution), digits = 3
-    ),
+test.total.bios <- final_production_data |>
+  group_by(keys, Species_weight) |>
+  summarise(TotScaleBio = 
+    sum(Scaled_Biomass_Contribution),
     .groups = "keep"
-    ) %>%
-  ungroup() %>%
-  mutate(TotalBioDiff = Species_weight - TotScaleBio)
+    ) |>
+  ungroup() |>
+  mutate(TotalBioDiff = Species_weight - TotScaleBio) |>
+  mutate(TotalBioDiff = round(TotalBioDiff, digits = 3)
+         )
+    
 
 unique(test.total.bios$TotalBioDiff)
-# [1] 0.000  0.001 -0.001
+# [1] 0.000
 
 #---------------------------------------------------------------
 # Fourth, create plot showing the the biological weight per length
@@ -685,7 +438,7 @@ borrowed.us.haul.comps <- fread(
 # Plot individual estimated weights per haul by length
 ## Note this includes the pseudo values!
 Hybrid.reweighting.w.correction <-
-  ggplot(final_production_data %>%
+  ggplot(final_production_data |>
            filter(!keys %in% borrowed.us.haul.comps$keys), 
          aes(x = standard_length, 
              y = Bio_Weight_kg,
@@ -746,11 +499,11 @@ ggsave2(filename="expansion_biomass_per.haul.plot.USA.jpeg",
 
 ```{r, sardine.presence}
 
-Sardine.present <- final_production_data %>%
-  group_by(keys, geometry) %>%
+Sardine.present <- final_production_data |>
+  group_by(keys, geometry) |>
   mutate(time.step = paste(Year," - ", Month, sep="")
-         ) %>%
-  ungroup() %>%
+         ) |>
+  ungroup() |>
   distinct()
 
 # View(Sardine.present)
@@ -761,15 +514,15 @@ Sardine.present <- final_production_data %>%
 
 ```{r, Absent.bin}
 
-Others <- full.series.sf %>% 
-  filter(scientific_name != "Sardinops sagax") %>%
+Others <- full.series.sf |> 
+  filter(scientific_name != "Sardinops sagax") |>
   group_by(cruise, ship, haul, collection,
            equilibrium_time.pacific, geometry
-           ) %>%
-  mutate(time.step = paste(Year," - ", Month, sep="")) %>%
-  ungroup() %>%
-  select(-c(longitude, latitude, is_random_sample)) %>%
-  distinct() %>%
+           ) |>
+  mutate(time.step = paste(Year," - ", Month, sep="")) |>
+  ungroup() |>
+  select(-c(longitude, latitude, is_random_sample)) |>
+  distinct() |>
   mutate(weight = 0,
          Species_weight = 0,
          len.bin = NA,
@@ -784,9 +537,8 @@ Others <- full.series.sf %>%
          Bin_Haul_Biomass = 0,
          Indiv_W_Scaled = 0,
          Scaled_Biomass_Contribution = 0,
-         Expansion_Factor = NA,
-         age = NA,
-         mean.length.age = NA) %>%
+         Expansion_Factor = NA
+         ) |>
   distinct()
 
 ```
@@ -817,11 +569,10 @@ Sardine.present <- Sardine.present[,-c(20:22)]
 # [12] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
 # [23] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
 # [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
-# [45] FALSE FALSE
 
 # Filter out hauls that had Sardine catch. What is left
 # will be considered "true" absence.
-Absent <- Others %>%
+Absent <- Others |>
   filter(!keys %in% Sardine.present$keys)
 # View(Absent)
 
@@ -834,272 +585,24 @@ From the structure it is necessary to change the len.bin3 equilibrium_time.pacif
 ```{r, join.tables}
 
 # Formats match, join the two data frames.
-PreAbs <- rbind(Sardine.present, Absent) %>%
+PreAbs <- rbind(Sardine.present, Absent) |>
   # Create a data object
   mutate(date = as.Date(equilibrium_time.pacific))
 # View(PreAbs)
 
 unique(is.na(PreAbs))
 
-fwrite(PreAbs %>% st_drop_geometry(), 
+fwrite(PreAbs |> st_drop_geometry(), 
        here(dir, "Data", "ATM CPS Survey",
             "CPS.ATM.Survey.final.dat.csv"), sep = ";")
-
-# plot locations
-ggplot() +
-  geom_sf(data = PreAbs, col = "black")
-
-# Project data for intersection analyses
-PreAbs.aea_custom <- PreAbs %>%
-  st_transform(., crs = aea_custom)
-
-# plot projected data locations
-ggplot() +
-  geom_sf(data = PreAbs.aea_custom, col = "black")
-
-```
-
-# Find min and max geographical extents
-
-Note this is only for graph labels and is chosen based on the mean lat and lon values of the haul transect locations.
-
-```{r, Create.plot.label.breaks}
-
-st_bbox(PreAbs) 
-#      xmin      ymin      xmax      ymax 
-# -132.7783   28.6513 -114.7928   54.3102  
-
-lat_breaks <- seq(27, 55, 4)  # Latitude breaks
-
-lat_labels <- c(paste(27, "\u00b0", "N", sep=""),
-                paste(31, "\u00b0", "N", sep=""),
-                paste(35, "\u00b0", "N", sep=""),
-                paste(39, "\u00b0", "N", sep=""),
-                paste(43, "\u00b0", "N", sep=""),
-                paste(47, "\u00b0", "N", sep=""),
-                paste(51, "\u00b0", "N", sep=""),
-                paste(55, "\u00b0", "N", sep=""))
-
-```
-
-# Create base map
-
-Note that cropping should be done before projecting the data and projecting the data should be done before any intersection analysis.
-
-```{r, basemap}
-
-# 1. Turn off s2 processing for map graphic only
-sf_use_s2(FALSE)
-
-#---------------------------------------------------------------
-# Make coastline backdrop
-#---------------------------------------------------------------
-
-PacificCoast <- ne_countries(scale = 10, returnclass = "sf") 
-PacificCoast3.wgs84 <- st_crop(PacificCoast, xmin = -133, 
-                               xmax = -110,
-                               ymin = 25, ymax = 55)
-class(PacificCoast3.wgs84)
-
-#---------------------------------------------------------------
-# Plot output
-#---------------------------------------------------------------
-
-ggplot() +
-    geom_sf(data = PacificCoast3.wgs84, 
-            fill = "#D2B48C", col = "#927143") +
-    xlab("Longitude") + ylab("Latitude") +
-    ggtitle("West Coast map") +
-    theme_classic()
-
-```
-
-## Apply min and max geographical extents
-
-```{r, adjust.map.dimensions}
-
-#---------------------------------------------------------------
-# Find spatial extents
-#---------------------------------------------------------------
-
-xmin <- st_bbox(PacificCoast3.wgs84)["xmin"]
-xmin
-# [1] -133
-
-xmax <- st_bbox(PacificCoast3.wgs84)["xmax"]
-xmax
-# [1] -110
-
-#---------------------------------------------------------------
-# Crop land mass
-#---------------------------------------------------------------
-
-PacificCoast4.wgs84 <- PacificCoast3.wgs84 %>% 
-  # Clip the shapefile to match the latitude range
-  st_crop(PacificCoast3.wgs84, 
-          xmin = -133, 
-          xmax = -111,
-          ymin = 27, 
-          ymax = 55)
-  
-#---------------------------------------------------------------
-# Plot
-#---------------------------------------------------------------
-
-PacificCoast4.wgs84.map <-
-  ggplot() +
-  geom_sf(data = PacificCoast4.wgs84,
-          color = "#ae8f60", 
-          size = 0.7, 
-          fill = "#E1C699") +
-  theme_void() +
-  scale_y_continuous(limits = c(27,55), 
-                     breaks = lat_breaks, 
-                     labels = lat_labels, 
-                     expand = c(0.05, 0.05)) +
-  labs(y = "Latitude")
-
-PacificCoast4.wgs84.map
-
-st_bbox(PacificCoast4.wgs84)
-#     xmin ymin xmax ymax
-# [1] -133   27 -111   55
-
-```
-
-## Creat hline boundaries
-
-Because the current model looks at only the Northern sub population in US waters, one of the boundary extents should include the national boarders. The second should look at the coast of California where the most mixing is thought to occur for Pacific Sardine sub populations (under the current survey hypothesis). From the data we are looking at data from UTM zone 10 and UTM zone 11 use the USA Contiguous Albers Equal Area Conic project (ESRI:102003). The corresponding ESPG code for ESRI:102003 is aea_custom.
-
-```{r, find.original.model.break.dimensions}
-
-# 1. Turn off s2 processing for map graphic only
-sf_use_s2(FALSE)
-
-# First transform the data to be able to do intersection analysis
-PacificCoast4.aea_custom <- st_transform(PacificCoast4.wgs84, 
-                                         crs = aea_custom)
-
-#---------------------------------------------------------------
-# In order to find the state boundary extents, use ne_states
-# function in rnaturalearth
-#---------------------------------------------------------------
-
-# Find state boundaries
-PCoastStates.wgs84 <- ne_states(returnclass = "sf")
-
-PCoastStates.aea_custom <-
-  # transform to NAD83 / Conus Albers
-  st_transform(PCoastStates.wgs84, crs = aea_custom) 
-
-PCoastStates <- st_intersection(PCoastStates.wgs84, 
-                                PacificCoast4.wgs84) %>%
-  st_transform(., crs = 4326)
-
-#------------------------------------------------------------------
-# For EEZ definitions 
-#------------------------------------------------------------------
-
-# https://nauticalcharts.noaa.gov/data/us-maritime-limits-and-boundaries.html
-
-eez.dir <- here(getwd(), "Data", "Shapefiles", "EEZ.Boundaries")
-eez <- read_sf(paste(eez.dir, "/USMaritimeLimitsNBoundaries.shp", 
-                     sep = ""))
-
-#------------------------------------------------------------------
-# Putting it all together
-#------------------------------------------------------------------
-
-hlines <- eez %>%
-  filter(REGION == "Pacific Coast") %>%
-  mutate(
-    # Create southern US EEZ boundary
-    ymin = st_bbox(.)["ymin"],
-    # Create northern US EEZ boundary
-    ymax = st_bbox(.)["ymax"],
-    # Create northern stock boundary (Westernmost Point, CA)
-    nstock = 40.4385,
-    # Create southern stock boundary (Point Conception, CA)
-    point.concept = 34.4486)
-
-```
-
-## Create city markers
-
-To make the map easier to interpret, add the names and locations of most populated cites
-
-```{r, add.map.details}
-
-# 1. Turn off s2 processing for map graphic only
-sf_use_s2(FALSE)
-
-#---------------------------------------------------------------
-# populated areas (cities and city names)
-#---------------------------------------------------------------
-
-Populated10.wgs84 <- ne_download(scale = 110, 
-                                 type = "populated_places_simple", 
-                                 category = "cultural", 
-                                 returnclass = "sf") 
-
-Populated10.aea_custom <- Populated10.wgs84 %>%
-  st_transform(., crs = aea_custom)
-
-Populated10 <- st_intersection(Populated10.aea_custom, 
-                               PacificCoast4.aea_custom) %>%
-  st_transform(., crs = 4326)
-
-#---------------------------------------------------------------
-# Plot definitions
-#---------------------------------------------------------------
-
-Defs.with.cps.atm.survey.dat <- 
-ggplot() +
-  geom_hline(data = hlines, aes(yintercept = nstock), 
-             col = "blue", 
-             linewidth = 0.7, linetype = "dashed") +
-  geom_hline(data = hlines, aes(yintercept = point.concept), 
-             col = "red", 
-             linewidth = 0.7, linetype = "longdash") +
-  geom_hline(data = hlines, aes(yintercept = ymin), 
-             col = "black", 
-             linewidth = 0.7) +
-  geom_hline(data = hlines, aes(yintercept = ymax), 
-             col = "black", 
-             linewidth = 0.7) +
-  geom_sf(data = PacificCoast4.wgs84,
-          color = "#ae8f60", 
-          size = 0.7, 
-          fill = "#E1C699") +
-  geom_sf(data = PCoastStates,
-          color = "#ae8f60", 
-          size = 0.7, 
-          fill = "#E1C699") +
-  geom_sf(data = Populated10, col = "black") +
-  geom_text(data = Populated10,
-            aes(x = longitude, y = latitude, label = name),
-            col = "black", 
-            position = position_dodge(width = 1),
-            vjust = 1) +
-  scale_y_continuous(limits = c(27,55), 
-                     breaks = lat_breaks, 
-                     labels = lat_labels, 
-                     expand = c(0.05, 0.05)) +
-  labs(y = "Latitude") +
-  geom_sf(data = PreAbs, col = "black")
-
-Defs.with.cps.atm.survey.dat
-
-ggsave2(filename="Defs.with.cps.atm.survey.dat.jpeg",
-        plot=Defs.with.cps.atm.survey.dat, device="jpeg", 
-        path=paste(dir, "/Final.Figures",sep=""), dpi=1200, 
-        width = 29, height=21, unit="cm", limitsize = FALSE)
 
 ```
 
 # Cluster hauls by date and sun event
 
-## First find the corresponding sunrise and suntime times
+This step is mainly for the summary table. 
+
+## First find the corresponding sunrise and sunset times
 
 This should be done by data, lat, and lon.
 
@@ -1109,20 +612,20 @@ This should be done by data, lat, and lon.
 sf_use_s2(TRUE)
 
 # Find the center of the polygon layers to use for joins
-PreAbs2 <- PreAbs %>%
+PreAbs2 <- PreAbs |>
   mutate(
-    lat = st_coordinates(st_centroid(.))[,2],
-    lon = st_coordinates(st_centroid(.))[,1]
+    lat = st_coordinates(st_centroid(geometry))[,2],
+    lon = st_coordinates(st_centroid(geometry))[,1]
   )
 
 # Use unique combinations from your data
-suntimes <- PreAbs2 %>%
+suntimes <- PreAbs2 |>
   transmute(
     lat = lat,
     lon = lon,
     date = date
-  ) %>%
-  distinct() %>%
+  ) |>
+  distinct() |>
   st_drop_geometry()
 
 dim(suntimes)
@@ -1174,7 +677,7 @@ dim(sun_times)
 
 # Add sun_times to original data set
 area.transects <- inner_join(PreAbs2, sun_times, 
-                             join_by("date", "lat", "lon")) %>%
+                             join_by("date", "lat", "lon")) |>
   st_transform(., crs = aea_custom)
 # View(area.transects)  
 
@@ -1194,25 +697,103 @@ Determine whether the haul was taken during the day or night.
 
 # Filter hauls that are taken before 
 # sunset time that are after sunrise time
-area.transects.d <- area.transects %>%
-  group_by(date) %>%
-  filter(equilibrium_time.pacific >= sunrise_pacific) %>%
-  mutate(cluster.grp = "day Trawl") %>%
+area.transects.d <- area.transects |>
+  group_by(date) |>
+  filter(equilibrium_time.pacific >= sunrise_pacific) |>
+  mutate(cluster.grp = "day Trawl") |>
+  ungroup()
+
+# Filter hauls that are taken before 
+# sunrise time that are after sunset time
+area.transects.n <- area.transects |>
+  group_by(date) |>
+  filter(equilibrium_time.pacific < sunrise_pacific |
+           equilibrium_time.pacific >= sunset_pacific) |>
+  mutate(cluster.grp = "night Trawl") |>
+  ungroup()
+
+# Join spatial objects and convert DateTime values to character 
+# string (ESIRI does not work with DateTime)
+area.transects.final <- rbind(area.transects.d, 
+                              area.transects.n) |>
+  mutate(haulback_time.pacific =
+           as.character(haulback_time.pacific),
+         equilibrium_time.pacific = 
+           as.character(equilibrium_time.pacific),
+         sunrise_pacific = as.character(sunrise_pacific),
+         sunset_pacific = as.character(sunset_pacific))
+
+dim(area.transects.final)
+# [1] 21347  51
+
+# View(area.transects.final)
+
+fwrite(area.transects.final |> st_drop_geometry(), 
+       here(dir, "Data", "area.transects.pre-step.shp"),
+       sep = ",")
+
+```
+
+## Join set set table with data for clusters
+
+Note that you the code above returns an IDate column for date and needs converted to standard date.
+
+```{r, join.sunrise.set.and.dat}
+
+# Check reference system
+st_crs(PreAbs2)
+
+dim(PreAbs2)
+# 1] 21347  48
+
+# Check output
+head(sun_times$sunrise_pacific)
+head(sun_times$sunset_pacific)
+
+dim(sun_times)
+# [1] 2006   5
+
+# Add sun_times to original data set
+area.transects <- inner_join(PreAbs2, sun_times, 
+                             join_by("date", "lat", "lon")) |>
+  st_transform(., crs = aea_custom)
+# View(area.transects)  
+
+dim(area.transects)
+# [1] 21347    50
+
+# Double check values
+unique(is.na(area.transects))
+
+```
+
+## Create id for potential future work 
+
+Determine whether the haul was taken during the day or night. 
+
+```{r, join.sunrise.set.and.dat}
+
+# Filter hauls that are taken before 
+# sunset time that are after sunrise time
+area.transects.d <- area.transects |>
+  group_by(date) |>
+  filter(equilibrium_time.pacific >= sunrise_pacific) |>
+  mutate(cluster.grp = "day Trawl") |>
   ungroup()
   
 # Filter hauls that are taken before 
 # sunrise time that are after sunset time
-area.transects.n <- area.transects %>%
-  group_by(date) %>%
+area.transects.n <- area.transects |>
+  group_by(date) |>
   filter(equilibrium_time.pacific < sunrise_pacific |
-           equilibrium_time.pacific >= sunset_pacific) %>%
-  mutate(cluster.grp = "night Trawl") %>%
+           equilibrium_time.pacific >= sunset_pacific) |>
+  mutate(cluster.grp = "night Trawl") |>
   ungroup()
   
 # Join spatial objects and convert DateTime values to character 
 # string (ESIRI does not work with DateTime)
 area.transects.final <- rbind(area.transects.d, 
-                              area.transects.n) %>%
+                              area.transects.n) |>
   mutate(haulback_time.pacific =
            as.character(haulback_time.pacific),
          equilibrium_time.pacific = 
@@ -1225,12 +806,12 @@ dim(area.transects.final)
 
 # View(area.transects.final)
   
-fwrite(area.transects.final %>% st_drop_geometry(), 
+fwrite(area.transects.final |> st_drop_geometry(), 
        here(dir, "Data", "area.transects.pre-step.shp"),
        sep = ",")
 
-area.transects.final <- area.transects.final %>%
-  mutate(FID = row_number(.))
+area.transects.final <- area.transects.final |>
+  mutate(FID = row_number())
 
 # Note data will be in wgs84
 area.transects.final.sf <- 
@@ -1240,7 +821,7 @@ area.transects.final.sf <-
 sort(unique(area.transects.final.sf$Month))
 # [1]  3  4  5  6  7  8  9 10 11
 
-area.transects.final.sf <- area.transects.final.sf %>%
+area.transects.final.sf <- area.transects.final.sf |>
   mutate(Season = case_when(
     month(date) %in% c(3:5) ~ "Spring",
     month(date) %in% c(6:9) ~ "Summer",
@@ -1249,325 +830,37 @@ area.transects.final.sf <- area.transects.final.sf %>%
 
 ```
 
-# Create a summary table
-
-This has to be done in multiple steps.
-
-## Simplify temporal aspects
-
-```{r, summary.table.time.step}
-
-area.transects.final.summary <- area.transects.final.sf  %>%
-  # For the summary table, remove Year and Month initially
-  select(-c(Year, Month)) %>%
-  # separate out date elements (note the other way would be to
-  # rename a vectored list) 
-  separate(date, into = c("Year", "Month", "Day")) %>%
-  # Create a numeric index of Month Day combination to sort on
-  mutate(MonthDay.num = 
-           as.numeric(paste(Month, Day, sep = ""))) %>%
-  # Create abbreviated month value
-  mutate(Month = month.abb[as.numeric(Month)],
-         Year = as.numeric(Year)) %>%
-  # Create Month day label
-  mutate(MonthDay = paste(Month, ". ", Day, sep = "")) %>%
-  distinct()
-
-dim(area.transects.final.summary) 
-# [1] 21347  55
-# View(area.transects.final.summary)
-
-#---------------------------------------------------------------
-# Summarize the corresponding months and days sampled per Year and 
-# Season
-#---------------------------------------------------------------
-
-Hauls.N <- area.transects.final.summary %>%
-  # Group Year, Season and night or day trawls
-  group_by(Year, Season) %>% 
-  arrange(MonthDay.num, .by_group = TRUE) %>%
-  mutate(MonthDay = 
-           paste(first(MonthDay), "-", last(MonthDay))) %>%
-  ungroup() %>%
-  # Remove unique identifiers
-  select(-c(MonthDay.num, Month, Day, haulback_time.pacific,
-            remaining_weight, Condition_Factor, W_theory,
-            W_best_estimate, Subsample_Total_W, Haul_Total_Catch_W,
-            Bin_Subsample_W, Bin_Prop, Bin_Haul_Biomass,
-            Indiv_W_Scaled, Bio_Weight_kg, keys.temp,
-            Scaled_Biomass_Contribution, Expansion_Factor, FID, 
-            sunrise_pacific, sunset_pacific, itis_tsn,
-            subsample_weight, beginTransect, endTransect,
-            haulback_time.utc, equilibrium_time.utc,
-            specimen_number, standard_length,
-            equilibrium_time.pacific,
-            cluster.grp, weight)) %>%
-  distinct()
-# View(Hauls.N)
-
-dim(Hauls.N) 
-# [1] 6881   23
-
-```
-
-## Create map by length bin
-
-```{r, map.of.length.bins}
-
-CPS.dat.extent <- st_bbox(Hauls.N)
-#      xmin      ymin      xmax      ymax 
-# -134.0793   28.6513 -114.7928   54.4157
-
-North.dat <- st_crop(Hauls.N, 
-                     xmin = -134.0793, 
-                     xmax = -114.7928, 
-                     ymin = unique(hlines$nstock),
-                     ymax = unique(hlines$ymax)
-                      )
-
-cps.atm.survey.length.bin.map.North <- 
-  ggplot() +
-  geom_hline(data = hlines, aes(yintercept = nstock), 
-             col = "blue", 
-             linewidth = 0.7, linetype = "dashed") +
- 
-  geom_hline(data = hlines, aes(yintercept = ymax), 
-             col = "black", 
-             linewidth = 0.7) +
-  labs(y = "Latitude") +
-  geom_sf(data = North.dat, 
-          aes(col = len.bin))
-
-cps.atm.survey.length.bin.map.North
-
-ggsave2(filename="cps.atm.survey.length.bin.map.North.jpeg",
-        plot=cps.atm.survey.length.bin.map.North, device="jpeg", 
-        path=paste(dir, "/Final.Figures",sep=""), dpi=1200, 
-        width = 29, height=21, unit="cm", limitsize = FALSE)
-
-South.dat  <- st_crop(Hauls.N, 
-                       xmin = -134.0793, 
-                       xmax = -114.7928, 
-                       ymin = unique(hlines$ymin),
-                       ymax = unique(hlines$nstock)
-                       )
-
-cps.atm.survey.length.bin.map.South <- 
-  ggplot() +
-  geom_hline(data = hlines, aes(yintercept = nstock), 
-             col = "blue", 
-             linewidth = 0.7, linetype = "dashed") +
-  geom_hline(data = hlines, aes(yintercept = point.concept), 
-             col = "red", 
-             linewidth = 0.7, linetype = "longdash") +
-  geom_hline(data = hlines, aes(yintercept = ymin), 
-             col = "black", 
-             linewidth = 0.7) +
-  labs(y = "Latitude") +
-  geom_sf(data = South.dat, 
-          aes(col = len.bin))
-
-cps.atm.survey.length.bin.map.South
-
-ggsave2(filename="cps.atm.survey.length.bin.map.South.jpeg",
-        plot=cps.atm.survey.length.bin.map.South, device="jpeg", 
-        path=paste(dir, "/Final.Figures",sep=""), dpi=1200, 
-        width = 29, height=21, unit="cm", limitsize = FALSE)
-
-```
-
-## Simplify spatial aspects
-
-Summarize the corresponding latitudinal range per season and night or day sampling.
-
-```{r, summary.table.sptl.dims}
-
-Hauls.N2 <- Hauls.N %>%
-  # For each haul, find min and max lat 
-  # (this is not the center point)
-  group_by(Year, Season, cruise, ship, haul, collection) %>% 
-  mutate(
-    # Extract the lowest latitude from the transect key
-    minLAT = min(st_coordinates(geometry)[, "Y"]),
-    # Extract the greatest latitude from the transect key
-    maxLAT = max(st_coordinates(geometry)[, "Y"])
-    ) %>%
-  ungroup() %>%
-  st_drop_geometry() %>%
-  # For each Year Season, create summary statistics
-  group_by(Year, Season) %>%
-    mutate(
-      Hauls = n_distinct(keys),
-      # nsmall -> 2 digits after
-      Latitudes = paste(format(round(min(minLAT), 2), nsmall = 2), 
-                        " - ",
-                        format(round(max(maxLAT), 2), nsmall = 2), 
-                        sep = "")
-      ) %>%
-  ungroup() 
-
-Hauls.N2 <- Hauls.N2 %>%
-  group_by(Year, Season, keys) %>%
-  mutate(Absent_hauls = case_when(
-    scientific_name == "Other" ~ n(),
-    scientific_name != "Other" ~ 0)
-    ) %>%
-  ungroup() %>%
-  # Remove individual measure observations
-  select(-c(minLAT, maxLAT, lon, lat, scientific_name,
-            start_latitude, start_longitude, stop_latitude,
-            stop_longitude)) %>%
-  distinct()
-
-dim(Hauls.N2)  
-# [1] 6881   18
-# View(Hauls.N2)
-
-```
-
-## summarize observations
-
-If there are presence observations, find length range. Note that if more than one time.step value exists, it means more than one observation is present!
-
-### Sardine presence data
-
-```{r, summary.table.sum.obs.pt1}
-
-#---------------------------------------------------------------
-# If Sardine are present and only one length bin:
-#---------------------------------------------------------------
-
-Hauls.N.p <- Hauls.N2 %>%
-  filter(!is.na(len.bin)) %>%
-  # Step 1: Get unique values per Haul/Key first
-  # Replace 'Key' with your actual unique identifier column name
-  group_by(Year, Season, keys) %>% 
-  mutate(
-    haul_n_samp = first(subsample_count),
-    haul_weight = first(Species_weight)
-  ) %>%
-  
-  # Step 2: Group by Year and Season to aggregate
-  group_by(Year, Season) %>%
-  summarise(
-    # Collapse unique length bins into a single string
-    Lengths = paste(sort(unique(len.bin)), collapse = " & "),
-    
-    # Sum only the unique haul values to avoid double-counting
-    n_samp = sum(haul_n_samp[!duplicated(keys)]),
-    Total_W = sum(haul_weight[!duplicated(keys)]),
-    .groups = "drop"
-  ) %>%
-  mutate(Lengths = paste0(Lengths, " cm"))
-
-```
-
-### Sardine absence data
-
-If there are no presence observations, write absent and put NA or 0.
-
-```{r, summary.table.sum.obs.pt2}
-
-Hauls.N.a <- Hauls.N2 %>%
-  group_by(Year, Season) %>%
-  filter(is.na(len.bin)) %>%
-  mutate(n_samp = 0,
-         Total_W = 0
-  ) %>%
-  # Remove individual measures
-  select(-c(len.bin)) %>%
-distinct()
-
-# View(Hauls.N.a)
-
-```
-
-### Join presence absence summary data
-
-```{r, summary.table.sum.obs.pt3}
-
-# 1. Join explicitly to avoid column suffixing (.x, .y)
-Hauls.N3 <- full_join(Hauls.N.p, 
-                      Hauls.N.a, 
-                      by = c("Year", "Season")) %>%
-  distinct()
-
-# 2. Simplified Indexing
-Hauls.N3.filter <- Hauls.N3 %>%
-  group_by(Year, Season, MonthDay, Latitudes) %>%
-  summarise(
-    Hauls        = first(Hauls, na.rm = TRUE),
-    Total_W      = first(Total_W.x, na.rm = TRUE),
-    n_samp       = first(n_samp.x, na.rm = TRUE),
-    # Take the first non-NA length bin string found in the group
-    Lengths      = first(na.omit(Lengths)),
-    # Sum absent hauls, treating NAs as 0
-    Absent_hauls = sum(Absent_hauls, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  # 3. Clean Sorting
-  mutate(SCOD = case_when(
-    Season == "Spring" ~ 1,
-    Season == "Summer" ~ 2,
-    Season == "Fall"   ~ 3
-  )) %>%
-  arrange(Year, SCOD) %>%
-  select(-SCOD)
-# Reorder table and simplify names
-survey.dat <- 
-  Hauls.N3.filter[,c("Year", "Season", "MonthDay", "Hauls",
-                     "Absent_hauls", "Total_W", "Lengths",
-                     "n_samp","Latitudes")] %>%
-  distinct()
-
-# View(survey.dat)
-
-names(survey.dat) <- c("Year", "Season", "MonthDay", "Total Hauls",
-                       "Nb. Absent Hauls", "Total Catch (kg)", 
-                       "Length Bins", "n sampled", "Latitudes")
-
-# View(survey.dat)
-
-#---------------------------------------------------------------
-# Save output
-#---------------------------------------------------------------
-
-fwrite(survey.dat, here(dir, "Final.Results", "summaryTable.csv"),
-                        sep=",")
-
-```
-
 # Calculate distance between start and stop of haul
 
 ```{r, start.stop.dist}
 
-area.transects.final.cln <- area.transects.final.sf %>%
+area.transects.final.cln <- area.transects.final.sf |>
 # Define coordinate pairs
-  group_by(keys) %>%
+  group_by(keys) |>
   mutate(
     start.coords = purrr::pmap(
       list(start_longitude, start_latitude),
       ~ st_point(c(..1, ..2))
-    ) %>%
+    ) |>
       st_sfc(crs = 4326),
 
     end.coords = purrr::pmap(
       list(stop_longitude, stop_latitude),
       ~ st_point(c(..1, ..2))
-    ) %>%
+    ) |>
       st_sfc(crs = 4326)
-  ) %>%
+  ) |>
   ungroup()  
 
-area.transects.final.cln <- area.transects.final.cln %>%
-  group_by(keys) %>%
+area.transects.final.cln <- area.transects.final.cln |>
+  group_by(keys) |>
   # Calculate distance travelled
   mutate(dist.trvl = geosphere::distVincentyEllipsoid(
     p1=st_coordinates(start.coords),
     p2=st_coordinates(end.coords),
     a=6378137,
     b=6356752.3142,
-    f=1/298.257223563)) %>%
+    f=1/298.257223563)) |>
   ungroup() 
 
 head(area.transects.final.cln$dist.trvl)
@@ -1579,34 +872,32 @@ head(area.transects.final.cln$dist.trvl)
 ```{r,start.stop.equal}
 
 # How many observations have the same start and stop
-dropped.dat <- area.transects.final.cln %>% 
-  mutate(dist.trvl.m = as.numeric(dist.trvl)) %>%
+dropped.dat <- area.transects.final.cln |> 
+  mutate(dist.trvl.m = as.numeric(dist.trvl)) |>
   filter(dist.trvl == 0)
 
 length(unique(dropped.dat$keys))
 # [1] 9
 
 # Filter out observations with same start and stop
-area.transects.final.cln2 <- area.transects.final.cln %>% 
-  mutate(dist.trvl.m = as.numeric(dist.trvl)) %>%
-  filter(dist.trvl.m != 0)  %>%
+area.transects.final.cln2 <- area.transects.final.cln |> 
+  mutate(dist.trvl.m = as.numeric(dist.trvl)) |>
+  filter(dist.trvl.m != 0)  |>
   select(-dist.trvl)
 
 # Check if there is a consistent haul distance -1 year
-test.2006 <- area.transects.final.cln2 %>%
+test.2006 <- area.transects.final.cln2 |>
   filter(Year == 2006 & 
            substr(cruise, nchar(cruise)-1, nchar(cruise)) == "04")
 range(test.2006$dist.trvl.m)
 # [1] 2910.914 4024.486
 
 # Check if there is a consistent haul distance +1 year
-test.2008 <- area.transects.final.cln2 %>%
+test.2008 <- area.transects.final.cln2 |>
   filter(Year == 2008 & 
            substr(cruise, nchar(cruise)-1, nchar(cruise)) == "04")
 range(test.2008$dist.trvl.m)
 # [1] 2809.329 7815.978
-
-
 
 ```
 
@@ -1636,8 +927,8 @@ unique(area.transects.final.cln2$ship)
 ```{r, sf.name.control}
 
 area.transects.final.cln3 <- 
-  area.transects.final.cln2 %>%
-  st_drop_geometry() %>%
+  area.transects.final.cln2 |>
+  st_drop_geometry() |>
   # Remove temporary keys
   select(-keys.temp)
 
@@ -1650,28 +941,28 @@ area.transects.final.cln3 <-
 2) Emmett RL, Brodeur RD, Miller TW, Pool S, Bentley PJ, Krutzikowsky GK, Mccrae J. 2005. 
 Pacific sardine (Sardinops sagax) abundance, distribution, and ecological relationships in the Pacific northwest. calif coop oceanic invest rep. 46:122–143.
 
-```{r, sweep.area.2004-2005}
+```{r, sweep.area.2003-2005}
 
 area.transects.final.2003.2005 <- 
-  area.transects.final.cln3 %>%
-  filter(Year %in% c(2003:2005)) %>%
+  area.transects.final.cln3 |>
+  filter(Year %in% c(2003:2005)) |>
   # Nordic264 rope, 30 min, 4 knots ~360m2 (20m * 18m)
-  mutate(area.op.m2 = 20*18) %>%
-  mutate(sweep.m3 = area.op.m2*dist.trvl.m) %>%
-  distinct() %>%
+  mutate(area.op.m2 = 20*18) |>
+  mutate(sweep.m3 = area.op.m2*dist.trvl.m) |>
+  distinct() |>
   # Calculate density for total haul
   mutate(
     Haul.kg.m3 = Species_weight/sweep.m3,
     Haul.g.m3 = Species_weight*1000/sweep.m3
-    ) %>%
-  distinct() %>%
+    ) |>
+  distinct() |>
   # Calculate density per length bin
-  group_by(keys, len.bin) %>%
+  group_by(keys, len.bin) |>
   # Calculate density for total haul
   mutate(
     LenBin.kg.m3 = Bin_Haul_Biomass/sweep.m3,
-    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) %>%
-  distinct() %>%
+    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) |>
+  distinct() |>
   ungroup()
 
 # View(area.transects.final.2003.2005)
@@ -1683,7 +974,7 @@ fwrite(
 
 # View(area.transects.final.2003.2005)
 
-test.range <- area.transects.final.2003.2005 %>%
+test.range <- area.transects.final.2003.2005 |>
   filter(Year != 2003 &
            !Month %in% c(10:11))
 
@@ -1695,14 +986,16 @@ range(test.range$stop_latitude)
 
 ```
 
-```{r}
+### Get summary characteristics for 2003-2005 cruises
 
-View(area.transects.final.2003.2005)
+```{r, cruise.summary.2003-2005}
+
+# View(area.transects.final.2003.2005)
 
 #----------------------------------------------------------------------------
 # 2003
 #----------------------------------------------------------------------------
-test2003 <- area.transects.final.2003.2005 %>% filter(Year == 2003)
+test2003 <- area.transects.final.2003.2005 |> filter(Year == 2003)
 unique(test2003$Month)
 # [1] 7
 unique(test2003$cruise)
@@ -1724,7 +1017,7 @@ unique(test2003$cluster.grp)
 # 2004
 #----------------------------------------------------------------------------
 
-test2004 <- area.transects.final.2003.2005 %>% filter(Year == 2004)
+test2004 <- area.transects.final.2003.2005 |> filter(Year == 2004)
 unique(test2004$cruise)
 # [1] 200403 200404 200407
 unique(test2004$ship)
@@ -1732,7 +1025,7 @@ unique(test2004$ship)
 unique(test2004$cluster.grp)
 # [1] "night Trawl"
 
-test200403 <- test2004 %>% filter(cruise == 200403)
+test200403 <- test2004 |> filter(cruise == 200403)
 unique(test200403$Month)
 # [1] 3
 min(test200403$start_latitude)
@@ -1744,7 +1037,7 @@ max(test200403$start_latitude)
 max(test200403$stop_latitude)
 # [1] 47.0333
 
-test200404 <- test2004 %>% filter(cruise == 200404)
+test200404 <- test2004 |> filter(cruise == 200404)
 unique(test200404$Month)
 # [1] 4
 min(test200404$start_latitude)
@@ -1756,7 +1049,7 @@ max(test200404$start_latitude)
 max(test200404$stop_latitude)
 # [1] 37.24
 
-test200407 <- test2004 %>% filter(cruise == 200407)
+test200407 <- test2004 |> filter(cruise == 200407)
 unique(test200407$Month)
 # [1] 7
 min(test200407$start_latitude)
@@ -1772,7 +1065,7 @@ max(test200407$stop_latitude)
 # 2005
 #----------------------------------------------------------------------------
 
-test2005 <- area.transects.final.2003.2005 %>% filter(Year == 2005)
+test2005 <- area.transects.final.2003.2005 |> filter(Year == 2005)
 unique(test2005$cruise)
 # 200503 200504
 unique(test2005$ship)
@@ -1782,7 +1075,7 @@ unique(test2005$Month)
 unique(test2005$cluster.grp)
 # [1] "night Trawl"
 
-test200503 <- test2005 %>% filter(cruise == 200503)
+test200503 <- test2005 |> filter(cruise == 200503)
 unique(test200503$Month)
 # [1] 3
 unique(test200503$ship)
@@ -1796,7 +1089,7 @@ max(test200503$start_latitude)
 max(test200503$stop_latitude)
 # [1]  48.067
 
-test200504 <- area.transects.final.2003.2005 %>% filter(cruise == 200504)
+test200504 <- area.transects.final.2003.2005 |> filter(cruise == 200504)
 unique(test200504$Month)
 # [1] 4
 unique(test200504$ship)
@@ -1811,7 +1104,6 @@ max(test200504$stop_latitude)
 # [1] 37.2711
 
 ```
-
 
 ## For 2006-2010
 
@@ -1828,25 +1120,25 @@ Note 720 m2 is cited twice, 600 m2 is cited once (the maximum opening vs the min
 ```{r, sweep.area.2006-2010}
 
 area.transects.final.2006.2010 <- 
-  area.transects.final.cln3 %>%
-  filter(Year %in% c(2006:2010)) %>%
+  area.transects.final.cln3 |>
+  filter(Year %in% c(2006:2010)) |>
   # Nordic264 rope, 30 min, 4 knots ~720m2 (24m * 30m)
-  mutate(area.op.m2 = 24*30) %>%
-  mutate(sweep.m3 = area.op.m2*dist.trvl.m) %>%
-  distinct() %>%
+  mutate(area.op.m2 = 24*30) |>
+  mutate(sweep.m3 = area.op.m2*dist.trvl.m) |>
+  distinct() |>
   # Calculate density for total haul
   mutate(
     Haul.kg.m3 = Species_weight/sweep.m3,
     Haul.g.m3 = Species_weight*1000/sweep.m3
-    ) %>%
-  distinct() %>%
+    ) |>
+  distinct() |>
   # Calculate density per length bin
-  group_by(keys, len.bin) %>%
+  group_by(keys, len.bin) |>
   # Calculate density for total haul
   mutate(
     LenBin.kg.m3 = Bin_Haul_Biomass/sweep.m3,
-    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) %>%
-  distinct() %>%
+    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) |>
+  distinct() |>
   ungroup()
 
 # View(area.transects.final.2006.2010)
@@ -1856,7 +1148,7 @@ fwrite(
   here(dir, "Data", "Shapefiles", "area.transects.final.2006.2010.csv"),
   sep = ",")
 
-test.range2 <- area.transects.final.2006.2010 %>%
+test.range2 <- area.transects.final.2006.2010 |>
   filter(Year != 2007 &
            !Month %in% c(10:11))
 
@@ -1867,14 +1159,18 @@ range(test.range2$stop_latitude)
 # [1] 31.3483 48.4225
 
 ```
-```{r}
 
-View(area.transects.final.2006.2010)
+### Get summary characteristics for 2006-2010 cruises
+
+```{r, cruise.summary.2006-2010}
+
+# View(area.transects.final.2006.2010)
 
 #----------------------------------------------------------------------------
 # 2006
 #----------------------------------------------------------------------------
-test2006 <- area.transects.final.2006.2010 %>% filter(Year == 2006)
+
+test2006 <- area.transects.final.2006.2010 |> filter(Year == 2006)
 unique(test2006$Month)
 # [1]
 unique(test2006$cruise)
@@ -1896,7 +1192,7 @@ unique(test2006$cluster.grp)
 # 2007
 #----------------------------------------------------------------------------
 
-test2007 <- area.transects.final.2006.2010 %>% filter(Year == 2007)
+test2007 <- area.transects.final.2006.2010 |> filter(Year == 2007)
 unique(test2007$cruise)
 # [1] 200704 200706
 unique(test2007$ship)
@@ -1904,13 +1200,13 @@ unique(test2007$ship)
 unique(test2007$cluster.grp)
 # [1] "night Trawl"
 
-test200704 <- test2007 %>% filter(cruise == 200704)
+test200704 <- test2007 |> filter(cruise == 200704)
 unique(test200704$Month)
 # [1]
 unique(test200704$ship)
 # [1] "LB" "JD"
 
-test200704LBJD <- test2007 %>% filter(cruise == 200704 & ship %in% c("LB", "JD"))
+test200704LBJD <- test2007 |> filter(cruise == 200704 & ship %in% c("LB", "JD"))
 min(test200704LBJD$start_latitude)
 # [1] 31.7921
 min(test200704LBJD$stop_latitude)
@@ -1920,7 +1216,7 @@ max(test200704LBJD$start_latitude)
 max(test200704LBJD$stop_latitude)
 # [1] 36.3806
 
-test200706 <- test2007 %>% filter(cruise ==  200706)
+test200706 <- test2007 |> filter(cruise ==  200706)
 unique(test200706$Month)
 # [1] 6
 min(test200706$start_latitude)
@@ -1936,7 +1232,7 @@ max(test200706$stop_latitude)
 # 2008
 #----------------------------------------------------------------------
 
-test2008 <- area.transects.final.2006.2010 %>% filter(Year == 2008)
+test2008 <- area.transects.final.2006.2010 |> filter(Year == 2008)
 unique(test2008$cruise)
 # [1] 200804 200807
 unique(test2008$ship)
@@ -1944,7 +1240,7 @@ unique(test2008$ship)
 unique(test2008$cluster.grp)
 # [1] "night Trawl"
 
-test200804 <- test2008 %>% filter(cruise ==  200804)
+test200804 <- test2008 |> filter(cruise ==  200804)
 unique(test200804$Month)
 # [1] 4
 unique(test200804$ship)
@@ -1958,7 +1254,7 @@ max(test200804$start_latitude)
 max(test200804$stop_latitude)
 # [1] 48.4121
 
-test200807 <- test2008 %>% filter(cruise ==  200807)
+test200807 <- test2008 |> filter(cruise ==  200807)
 unique(test200807$Month)
 # [1] 7 8
 unique(test200807$ship)
@@ -1976,7 +1272,7 @@ max(test200807$stop_latitude)
 # 2009
 #----------------------------------------------------------------------
 
-test2009 <- area.transects.final.2006.2010 %>% filter(Year == 2009)
+test2009 <- area.transects.final.2006.2010 |> filter(Year == 2009)
 unique(test2009$cruise)
 # [1] 200904
 unique(test2009$Month)
@@ -1998,7 +1294,7 @@ unique(test2009$cluster.grp)
 # 2010
 #----------------------------------------------------------------------------
 
-test2010 <- area.transects.final.2006.2010 %>% filter(Year == 2010)
+test2010 <- area.transects.final.2006.2010 |> filter(Year == 2010)
 unique(test2010$cruise)
 # [1] 201004
 unique(test2010$Month)
@@ -2034,25 +1330,25 @@ max(test2010$stop_latitude)
 ```{r, sweep.area.2011-2014}
 
 area.transects.final.2011.2014 <- 
-  area.transects.final.cln3 %>%
-  filter(Year %in% c(2011:2014)) %>%
+  area.transects.final.cln3 |>
+  filter(Year %in% c(2011:2014)) |>
   # Nordic264 rope, 30min, 4 knots ~600m2 (not specified)
-  mutate(area.op.m2 = 600) %>%
-  mutate(sweep.m3 = area.op.m2*dist.trvl.m) %>%
-  distinct() %>%
+  mutate(area.op.m2 = 600) |>
+  mutate(sweep.m3 = area.op.m2*dist.trvl.m) |>
+  distinct() |>
   # Calculate density for total haul
   mutate(
     Haul.kg.m3 = Species_weight/sweep.m3,
     Haul.g.m3 = Species_weight*1000/sweep.m3
-    ) %>%
-  distinct() %>%
+    ) |>
+  distinct() |>
   # Calculate density per length bin
-  group_by(keys, len.bin) %>%
+  group_by(keys, len.bin) |>
   # Calculate density for total haul
   mutate(
     LenBin.kg.m3 = Bin_Haul_Biomass/sweep.m3,
-    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) %>%
-  distinct() %>%
+    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) |>
+  distinct() |>
   ungroup()
 
 # View(area.transects.final.2011.2014)
@@ -2062,7 +1358,7 @@ fwrite(
   here(dir, "Data", "Shapefiles", "area.transects.final.2011.2014.csv"),
   sep = ",")
 
-test.range3 <- area.transects.final.2011.2014 %>%
+test.range3 <- area.transects.final.2011.2014 |>
   filter(!Month %in% c(10:11))
 
 range(test.range3$start_latitude)
@@ -2073,13 +1369,17 @@ range(test.range3$stop_latitude)
 
 ```
 
-```{r}
+### Get summary characteristics for 2011-2014 cruises
+
+```{r, cruise.summary.2011-2014}
+
+# View(area.transects.final.2011.2014)
 
 #----------------------------------------------------------------------------
 # 2011
 #----------------------------------------------------------------------------
 
-test2011 <- area.transects.final.2011.2014 %>% filter(Year == 2011)
+test2011 <- area.transects.final.2011.2014 |> filter(Year == 2011)
 unique(test2011$cruise)
 # [1] 201104
 unique(test2011$Month)
@@ -2101,7 +1401,7 @@ unique(test2011$cluster.grp)
 # 2012
 #----------------------------------------------------------------------------
 
-test2012 <- area.transects.final.2011.2014 %>% filter(Year == 2012)
+test2012 <- area.transects.final.2011.2014 |> filter(Year == 2012)
 unique(test2012$cruise)
 # [1] 201207 201208 201204
 unique(test2012$ship)
@@ -2109,7 +1409,7 @@ unique(test2012$ship)
 unique(test2012$cluster.grp)
 # [1] "night Trawl"
 
-test201204 <- test2012 %>% filter(cruise ==  201204)
+test201204 <- test2012 |> filter(cruise ==  201204)
 unique(test201204$Month)
 # [1] 4
 unique(test201204$ship)
@@ -2123,7 +1423,7 @@ max(test201204$start_latitude)
 max(test201204$stop_latitude)
 # [1] 38.0678
 
-test201207 <- test2012 %>% filter(cruise ==  201207)
+test201207 <- test2012 |> filter(cruise ==  201207)
 unique(test201207$Month)
 # [1] 7 8 6
 unique(test201207$ship)
@@ -2137,7 +1437,7 @@ max(test201207$start_latitude)
 max(test201207$stop_latitude)
 # [1] 50.6525
 
-test201208 <- test2012 %>% filter(cruise ==  201208)
+test201208 <- test2012 |> filter(cruise ==  201208)
 unique(test201208$Month)
 # [1] 8 7
 unique(test201207$ship)
@@ -2158,7 +1458,7 @@ max(test201208$stop_latitude)
 # 2013
 #----------------------------------------------------------------------------
 
-test2013 <- area.transects.final.2011.2014 %>% filter(Year == 2013)
+test2013 <- area.transects.final.2011.2014 |> filter(Year == 2013)
 unique(test2013$cruise)
 # [1] 201304 201307
 unique(test2013$ship)
@@ -2166,7 +1466,7 @@ unique(test2013$ship)
 unique(test2013$cluster.grp)
 # [1] "night Trawl"
 
-test201304 <- test2013 %>% filter(cruise ==  201304)
+test201304 <- test2013 |> filter(cruise ==  201304)
 unique(test201304$Month)
 # [1] 4
 unique(test201304$ship)
@@ -2180,7 +1480,7 @@ max(test201304$start_latitude)
 max(test201304$stop_latitude)
 # [1] 36.8228
 
-test201307 <- test2013 %>% filter(cruise ==  201307)
+test201307 <- test2013 |> filter(cruise ==  201307)
 unique(test201307$Month)
 # [1] 7 8 6
 unique(test201307$ship)
@@ -2198,7 +1498,7 @@ max(test201307$stop_latitude)
 # 2014
 #----------------------------------------------------------------------------
 
-test2014 <- area.transects.final.2011.2014 %>% filter(Year == 2014)
+test2014 <- area.transects.final.2011.2014 |> filter(Year == 2014)
 unique(test2014$cruise)
 # [1] 201404 201407
 unique(test2014$ship)
@@ -2206,7 +1506,7 @@ unique(test2014$ship)
 unique(test2014$cluster.grp)
 # [1] "night Trawl"
 
-test201404 <- test2014 %>% filter(cruise ==  201404)
+test201404 <- test2014 |> filter(cruise ==  201404)
 unique(test201404$Month)
 # [1] 4 5
 unique(test201404$ship)
@@ -2220,7 +1520,7 @@ max(test201404$start_latitude)
 max(test201404$stop_latitude)
 # [1] 36.8228
 
-test201407 <- test2014 %>% filter(cruise ==  201407)
+test201407 <- test2014 |> filter(cruise ==  201407)
 unique(test201407$Month)
   # [1] 6 7 8
 unique(test201307$ship)
@@ -2251,25 +1551,25 @@ max(test201407$stop_latitude)
 ```{r, sweep.area.2015-2020}
 
 area.transects.final.2015.2020 <- 
-  area.transects.final.cln3 %>%
-  filter(Year %in% c(2015:2020)) %>%
+  area.transects.final.cln3 |>
+  filter(Year %in% c(2015:2020)) |>
   # Nordic264 rope, 30-45min, 3.5-5 knots ~300m2 (15m * 20m) 
-  mutate(area.op.m2 = 15*20) %>%
-  mutate(sweep.m3 = area.op.m2*dist.trvl.m) %>%
-  distinct() %>%
+  mutate(area.op.m2 = 15*20) |>
+  mutate(sweep.m3 = area.op.m2*dist.trvl.m) |>
+  distinct() |>
   # Calculate density for total haul
   mutate(
     Haul.kg.m3 = Species_weight/sweep.m3,
     Haul.g.m3 = Species_weight*1000/sweep.m3
-    ) %>%
-  distinct() %>%
+    ) |>
+  distinct() |>
   # Calculate density per length bin
-  group_by(keys, len.bin) %>%
+  group_by(keys, len.bin) |>
   # Calculate density for total haul
   mutate(
     LenBin.kg.m3 = Bin_Haul_Biomass/sweep.m3,
-    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) %>%
-  distinct() %>%
+    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) |>
+  distinct() |>
   ungroup()
 
 # View(area.transects.final.2015.2020)
@@ -2280,7 +1580,7 @@ fwrite(
     dir, "Data", "Shapefiles", "area.transects.final.2015.2020.csv"), 
   sep = ",")
 
-test.range4 <- area.transects.final.2015.2020 %>%
+test.range4 <- area.transects.final.2015.2020 |>
   filter(!Month %in% c(10:11))
 
 range(test.range4$start_latitude)
@@ -2290,13 +1590,18 @@ range(test.range4$stop_latitude)
 # [1] 32.1355 54.2875
 
 ```
-```{r}
+
+### Get summary characteristics for 2015-2020 cruises
+
+```{r, cruise.summary.2015-2020}
+
+# View(area.transects.final.2015.2020)
 
 #----------------------------------------------------------------------------
 # 2015
 #----------------------------------------------------------------------------
 
-test2015 <- area.transects.final.2015.2020 %>% filter(Year == 2015)
+test2015 <- area.transects.final.2015.2020 |> filter(Year == 2015)
 unique(test2015$cruise)
 # [1] 201504 201507
 unique(test2015$ship)
@@ -2304,7 +1609,7 @@ unique(test2015$ship)
 unique(test2015$cluster.grp)
 # [1] "night Trawl"
 
-test201504 <- test2015 %>% filter(cruise ==  201504)
+test201504 <- test2015 |> filter(cruise ==  201504)
 unique(test201504$Month)
 # [1] 4 3 5
 min(test201504$start_latitude)
@@ -2316,7 +1621,7 @@ max(test201504$start_latitude)
 max(test201504$stop_latitude)
 # [1] 44.276
 
-test201507 <- test2015 %>% filter(cruise ==  201507)
+test201507 <- test2015 |> filter(cruise ==  201507)
 unique(test201507$Month)
 # [1] 6 7 8 9
 min(test201507$start_latitude)
@@ -2334,7 +1639,7 @@ max(test201507$stop_latitude)
 # 2016
 #----------------------------------------------------------------------------
 
-test2016 <- area.transects.final.2015.2020 %>% filter(Year == 2016)
+test2016 <- area.transects.final.2015.2020 |> filter(Year == 2016)
 unique(test2016$cruise)
 # [1] 201607 201604
 unique(test2016$ship)
@@ -2342,7 +1647,7 @@ unique(test2016$ship)
 unique(test2016$cluster.grp)
 # [1] "day Trawl"   "night Trawl"
 
-test201604 <- test2016 %>% filter(cruise ==  201604)
+test201604 <- test2016 |> filter(cruise ==  201604)
 unique(test201604$Month)
 # [1] 3 4
 min(test201604$start_latitude)
@@ -2356,7 +1661,7 @@ max(test201604$stop_latitude)
 unique(test201604$cluster.grp)
 # [1] "night Trawl"
 
-test201607 <- test2016 %>% filter(cruise ==  201607)
+test201607 <- test2016 |> filter(cruise ==  201607)
 unique(test201607$Month)
 # [1] 8 7 9
 min(test201607$start_latitude)
@@ -2374,7 +1679,7 @@ unique(test201607$cluster.grp)
 # 2017
 #----------------------------------------------------------------------------
 
-test2017 <- area.transects.final.2015.2020 %>% filter(Year == 2017)
+test2017 <- area.transects.final.2015.2020 |> filter(Year == 2017)
 unique(test2017$cruise)
 # [1] 201707 201704
 unique(test2017$ship)
@@ -2382,7 +1687,7 @@ unique(test2017$ship)
 unique(test2017$cluster.grp)
 # [1] "night Trawl"
 
-test201704 <- test2017 %>% filter(cruise ==  201704)
+test201704 <- test2017 |> filter(cruise ==  201704)
 unique(test201704$Month)
 # [1] 4 3
 min(test201704$start_latitude)
@@ -2394,7 +1699,7 @@ max(test201704$start_latitude)
 max(test201704$stop_latitude)
 # [1] 37.7573
 
-test201707 <- test2017 %>% filter(cruise ==  201707)
+test201707 <- test2017 |> filter(cruise ==  201707)
 unique(test201707$Month)
 # [1] 8 7 6
 min(test201707$start_latitude)
@@ -2410,7 +1715,7 @@ max(test201707$stop_latitude)
 # 2018
 #----------------------------------------------------------------------------
 
-test2018 <- area.transects.final.2015.2020 %>% filter(Year == 2018)
+test2018 <- area.transects.final.2015.2020 |> filter(Year == 2018)
 unique(test2018$cruise)
 # [1] 201807
 unique(test2018$Month)
@@ -2432,7 +1737,7 @@ unique(test2018$cluster.grp)
 # 2018
 #----------------------------------------------------------------------------
 
-test2019 <- area.transects.final.2015.2020 %>% filter(Year == 2019)
+test2019 <- area.transects.final.2015.2020 |> filter(Year == 2019)
 unique(test2019$cruise)
 # [1] 201907
 unique(test2019$Month)
@@ -2466,25 +1771,25 @@ DURING SUMMER 2023 BASED ON ACOUSTIC-TRAWL SAMPLING. https://doi.org/10.25923/1v
 ```{r, sweep.area.2021-2023}
 
 area.transects.final.2021.2023 <- 
-  area.transects.final.cln3 %>%
-  filter(Year %in% c(2021:2023)) %>%
+  area.transects.final.cln3 |>
+  filter(Year %in% c(2021:2023)) |>
   # Nordic264 rope, 45min, 3.5-4.5 knots ~300m2 (15m * 20m)
-  mutate(area.op.m2 = 15*20) %>%
-  mutate(sweep.m3 = area.op.m2*dist.trvl.m) %>%
-  distinct() %>%
+  mutate(area.op.m2 = 15*20) |>
+  mutate(sweep.m3 = area.op.m2*dist.trvl.m) |>
+  distinct() |>
   # Calculate density for total haul
   mutate(
     Haul.kg.m3 = Species_weight/sweep.m3,
     Haul.g.m3 = Species_weight*1000/sweep.m3
-    ) %>%
-  distinct() %>%
+    ) |>
+  distinct() |>
   # Calculate density per length bin
-  group_by(keys, len.bin) %>%
+  group_by(keys, len.bin) |>
   # Calculate density for total haul
   mutate(
     LenBin.kg.m3 = Bin_Haul_Biomass/sweep.m3,
-    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) %>%
-  distinct() %>%
+    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) |>
+  distinct() |>
   ungroup()
 
 # View(area.transects.final.2021.2023)
@@ -2495,7 +1800,7 @@ fwrite(
       dir, "Data", "Shapefiles", "area.transects.final.2021.2023.csv"), 
   sep = ",")
 
-test.range5 <- area.transects.final.2021.2023 %>%
+test.range5 <- area.transects.final.2021.2023 |>
   filter(!Month %in% c(10:11))
 
 range(test.range5$start_latitude)
@@ -2506,13 +1811,17 @@ range(test.range5$stop_latitude)
 
 ```
 
-```{r}
+### Get summary characteristics for 2021-2023 cruises
+
+```{r, cruise.summary.2021-2023}
+
+# View(area.transects.final.2021.2023)
 
 #----------------------------------------------------------------------------
 # 2021
 #----------------------------------------------------------------------------
 
-test2021 <- area.transects.final.2021.2023 %>% filter(Year == 2021)
+test2021 <- area.transects.final.2021.2023 |> filter(Year == 2021)
 unique(test2021$cruise)
 # [1] 202103 202107
 unique(test2021$ship)
@@ -2520,7 +1829,7 @@ unique(test2021$ship)
 unique(test2021$cluster.grp)
 # [1] "night Trawl"
 
-test202103 <- test2021 %>% filter(cruise ==  202103)
+test202103 <- test2021 |> filter(cruise ==  202103)
 unique(test202103$Month)
 # [1] 3 4
 min(test202103$start_latitude)
@@ -2532,7 +1841,7 @@ max(test202103$start_latitude)
 max(test202103$stop_latitude)
 # [1] 36.5405
 
-test202107 <- test2021 %>% filter(cruise ==  202107)
+test202107 <- test2021 |> filter(cruise ==  202107)
 unique(test202107$Month)
 # [1] 7 8 9 10
 min(test202107$start_latitude)
@@ -2548,7 +1857,7 @@ max(test202107$stop_latitude)
 # 2022
 #----------------------------------------------------------------------------
 
-test2022 <- area.transects.final.2021.2023 %>% filter(Year == 2022)
+test2022 <- area.transects.final.2021.2023 |> filter(Year == 2022)
 unique(test2022$Month)
 # [1] 7 8 9
 unique(test2022$cruise)
@@ -2570,7 +1879,7 @@ unique(test2022$cluster.grp)
 # 2023
 #----------------------------------------------------------------------------
 
-test2023 <- area.transects.final.2021.2023 %>% filter(Year == 2023)
+test2023 <- area.transects.final.2021.2023 |> filter(Year == 2023)
 unique(test2023$Month)
 # [1] 7 9 10 11
 unique(test2023$cruise)
@@ -2599,25 +1908,25 @@ Stierhoff, K.L., Renfree, J.S., and Zwolinski, J.P. 2025. Distribution, biomass,
 ```{r, sweep.area.2024-2025}
 
 area.transects.final.2024.2025 <- 
-  area.transects.final.cln3 %>%
-  filter(Year %in% c(2024:2025)) %>%
+  area.transects.final.cln3 |>
+  filter(Year %in% c(2024:2025)) |>
   # Nordic264 rope, 30min, 3.5 knots ~648m2 
-  mutate(area.op.m2 = 18*36) %>%
-  mutate(sweep.m3 = area.op.m2*dist.trvl.m) %>%
-  distinct() %>%
+  mutate(area.op.m2 = 18*36) |>
+  mutate(sweep.m3 = area.op.m2*dist.trvl.m) |>
+  distinct() |>
   # Calculate density for total haul
   mutate(
     Haul.kg.m3 = Species_weight/sweep.m3,
     Haul.g.m3 = Species_weight*1000/sweep.m3
-    ) %>%
-  distinct() %>%
+    ) |>
+  distinct() |>
   # Calculate density per length bin
-  group_by(keys, len.bin) %>%
+  group_by(keys, len.bin) |>
   # Calculate density for total haul
   mutate(
     LenBin.kg.m3 = Bin_Haul_Biomass/sweep.m3,
-    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) %>%
-  distinct() %>%
+    LenBin.g.m3 = Bin_Haul_Biomass*1000/sweep.m3) |>
+  distinct() |>
   ungroup()
 
 # View(area.transects.final.2024.2025)
@@ -2628,7 +1937,7 @@ fwrite(
       dir, "Data", "Shapefiles", "area.transects.final.2024.2025.csv"), 
   sep = ",")
 
-test.range5 <- area.transects.final.2024.2025 %>%
+test.range5 <- area.transects.final.2024.2025 |>
   filter(!Month %in% c(10:11))
 
 range(test.range5$start_latitude)
@@ -2638,13 +1947,18 @@ range(test.range5$stop_latitude)
 # [1] 28.6548 49.8043
 
 ```
-```{r}
+
+### Get summary characteristics for 2024-2025 cruises
+
+```{r, cruise.summary.2024-2025}
+
+# View(area.transects.final.2024.2025)
 
 #----------------------------------------------------------------------------
 # 2024
 #----------------------------------------------------------------------------
 
-test2024 <- area.transects.final.2024.2025 %>% filter(Year == 2024)
+test2024 <- area.transects.final.2024.2025 |> filter(Year == 2024)
 unique(test2024$Month)
 # [1] 7 8 9
 unique(test2024$cruise)
@@ -2666,7 +1980,7 @@ unique(test2024$cluster.grp)
 # 2025
 #----------------------------------------------------------------------------
 
-test2025 <- area.transects.final.2024.2025 %>% filter(Year == 2025)
+test2025 <- area.transects.final.2024.2025 |> filter(Year == 2025)
 unique(test2025$Month)
 # [1] 6 7 8 9 
 unique(test2025$cruise)
