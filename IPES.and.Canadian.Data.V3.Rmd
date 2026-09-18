@@ -3086,9 +3086,7 @@ max(test2014$stop_latitude, na.rm = T)
 
 ```
 
-## Get summary characteristics for 2017 cruises
-
-Note there was no survey in 2019 or 2020.
+## Get summary characteristics for 2017 to 2019 cruises
 
 ```{r, cruise.summary.2017}
 
@@ -3099,35 +3097,71 @@ Note there was no survey in 2019 or 2020.
 test2017 <- comb.dat2017.2024.sf |>
   filter(Year == 2017)
 sort(unique(test2017$Month))
-# [1] 8
-mean(test2017$TOW_DURATION, na.rm = T)
+# [1] 7 8
+mean(test2017$area.op.m2, na.rm = T)
+# [1] 456.5391
+unique(is.na(test2017$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+unique(is.na(test2017$start_latitude))
+# [1] FALSE
+min(test2017$start_latitude, na.rm = T)
+# [1] 48.31992
+max(test2017$start_latitude, na.rm = T)
+# [1] 51.24373
+unique(is.na(test2017$stop_latitude))
+# [1] FALSE 
+min(test2017$stop_latitude, na.rm = T)
+# [1] 48.31402
+max(test2017$stop_latitude, na.rm = T)
+# [1] 51.26655
+
+#---------------------------------------------------
+# 2018
+#---------------------------------------------------
+
+test2018 <- comb.dat2017.2024.sf |>
+  filter(Year == 2018)
+sort(unique(test2018$Month))
+# [1] 7
+mean(test2018$TOW_DURATION, na.rm = T)
 # [1] 20.40678
-mean(test2014$SPEED, na.rm = T) # in km/h
-# [1] 9.137288
-mean(test2014$SPEED/1.852, na.rm = T) # in knots
-# [1] 4.933741
-mean(test2014$area.op.m2, na.rm = T)
-# [1] 407.8305
-unique(is.na(test2014$MOUTH_OPENING_HEIGHT))
-# [1] FALSE 
-mean(test2014$MOUTH_OPENING_HEIGHT, na.rm = T)
-# [1] 12.0339
-unique(is.na(test2014$MOUTH_OPENING_WIDTH))
+mean(test2018$area.op.m2, na.rm = T)
+# [1] 605.5128
+unique(is.na(test2018$start_latitude))
 # [1] FALSE
-mean(test2014$MOUTH_OPENING_WIDTH, na.rm = T)
-# [1] 33.89831
-unique(is.na(test2014$start_latitude))
-# [1] FALSE
-min(test2014$start_latitude, na.rm = T)
-# [1] 48.33717
-max(test2014$start_latitude, na.rm = T)
-# [1] 50.59967
-unique(is.na(test2014$stop_latitude))
+min(test2018$start_latitude, na.rm = T)
+# [1] 48.27968
+max(test2018$start_latitude, na.rm = T)
+# [1] 51.19595
+unique(is.na(test2018$stop_latitude))
 # [1] FALSE 
-min(test2014$stop_latitude, na.rm = T)
-# [1] 48.33052
-max(test2014$stop_latitude, na.rm = T)
-# [1] 50.56993
+min(test2018$stop_latitude, na.rm = T)
+# [1] 48.2839
+max(test2018$stop_latitude, na.rm = T)
+# [1] 51.18867
+
+#---------------------------------------------------
+# 2019
+#---------------------------------------------------
+
+test2019 <- comb.dat2017.2024.sf |>
+  filter(Year == 2019)
+sort(unique(test2019$Month))
+# [1] 6 7
+mean(test2019$area.op.m2, na.rm = T)
+# [1] 555.3554
+unique(is.na(test2019$start_latitude))
+# [1] FALSE
+min(test2019$start_latitude, na.rm = T)
+# [1] 48.2751
+max(test2019$start_latitude, na.rm = T)
+# [1] 51.19725
+unique(is.na(test2019$stop_latitude))
+# [1] FALSE 
+min(test2019$stop_latitude, na.rm = T)
+# [1] 48.2783
+max(test2019$stop_latitude, na.rm = T)
+# [1] 51.1865
 
 ```
 
