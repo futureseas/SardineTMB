@@ -89,7 +89,7 @@ us.dat.2024.2025 <-
 # Join data sets
 full.us.dat <- rbind(us.dat.2003.2005, us.dat.2006.2010,
                      us.dat.2011.2014, us.dat.2015.2020,
-                     us.dat.2021.2023, us.dat.2024.2025) %>%
+                     us.dat.2021.2023, us.dat.2024.2025) |>
   # Create country label
   mutate(Country = "USA")
 
@@ -125,7 +125,7 @@ colnames(full.us.dat)
 # [57] "Density.kg.m3"               "Density.g.m3"               
 # [59] "Country"                               
 
-full.us.dat.short <- full.us.dat %>%
+full.us.dat.short <- full.us.dat |>
   select(keys, Year, Season, Species_weight, len.bin, Bin_Haul_Biomass, 
          Scaled_Biomass_Contribution, start_latitude, start_longitude, 
          stop_latitude, stop_longitude, scientific_name, standard_length, 
@@ -134,7 +134,7 @@ full.us.dat.short <- full.us.dat %>%
 
 str(full.us.dat.short)
 
-full.us.dat.short <- full.us.dat.short %>%
+full.us.dat.short <- full.us.dat.short |>
   mutate(Fin_sweep.m3 = as.numeric(sweep.m3),
          Year = as.numeric(Year),
          Species_weight = 
@@ -154,22 +154,22 @@ full.us.dat.short <- full.us.dat.short %>%
          Bio_Weight_kg = as.numeric(Bio_Weight_kg),
          Fin_sweep.m2 = area.op.m2,
          Fin_sweep.m3 = as.numeric(sweep.m3)
-         ) %>%
+         ) |>
   # Remove column used to designate entries, where gear opening 
   # area was known or unknown
   select(-c(sweep.m3, area.op.m2))
   
 
 # Check for issues
-full.us.dat.short.test <- full.us.dat.short %>% 
-  group_by(keys) %>%
+full.us.dat.short.test <- full.us.dat.short |> 
+  group_by(keys) |>
   summarise(Haul.kg = round(sum(Scaled_Biomass_Contribution), 7),
             Haul.check = first(Species_weight),
-            Fin_sweep.m3 = first(as.numeric(Fin_sweep.m3))) %>%
-  ungroup() %>%
+            Fin_sweep.m3 = first(as.numeric(Fin_sweep.m3))) |>
+  ungroup() |>
   mutate(dff = Haul.check - Haul.kg)
 
-full.us.dat.short.test2 <- full.us.dat.short.test %>%
+full.us.dat.short.test2 <- full.us.dat.short.test |>
   filter(dff != 0)
 dim(full.us.dat.short.test2)
 # [1] 0 5
@@ -182,19 +182,19 @@ canadian.dat <-
   fread(here(dir, "Data",
              "Shapefiles","Canadian.set.1999.2024.csv"),
         sep = ","
-        ) %>%
+        ) |>
   # Create country label
   mutate(Country = "Canada")
 
-canadian.dat.short <- canadian.dat %>%
+canadian.dat.short <- canadian.dat |>
   select(keys, Year, Season, Species_weight, len.bin, Bin_Haul_Biomass, 
          Scaled_Biomass_Contribution, start_latitude, start_longitude, 
          stop_latitude, stop_longitude, scientific_name, standard_length, 
          date, Haul.kg.m3, LenBin.kg.m3, Country, Bio_Weight_kg, 
          Fin_sweep.m2, Fin_sweep.m3) 
 
-canadian.dat.short <- canadian.dat.short %>%
-  group_by(keys) %>%
+canadian.dat.short <- canadian.dat.short |>
+  group_by(keys) |>
   mutate(Year = as.numeric(Year),
          Species_weight = 
            as.numeric(Species_weight),
@@ -212,29 +212,35 @@ canadian.dat.short <- canadian.dat.short %>%
          LenBin.kg.m3 = as.numeric(LenBin.kg.m3),
          Bio_Weight_kg = as.numeric(Bio_Weight_kg),
          Fin_sweep.m3 = as.numeric(Fin_sweep.m3)
-         ) %>%
-  ungroup() #%>%
+         ) |>
+  ungroup() #|>
   # Remove column used to designate entries, where gear opening 
   # area was known or unknown
   #select(-c(sweep.m3, avg.sweep.m3))
 
 # Check for issues
-full.cad.dat.short.test <- canadian.dat.short %>% 
-  group_by(keys) %>%
+full.cad.dat.short.test <- canadian.dat.short |> 
+  group_by(keys) |>
   summarise(Haul.kg = round(sum(Scaled_Biomass_Contribution), 7),
             Haul.check = first(Species_weight),
-            Fin_sweep.m3 = first(Fin_sweep.m3)) %>%
-  ungroup() %>%
+            Fin_sweep.m3 = first(Fin_sweep.m3)) |>
+  ungroup() |>
   mutate(dff = Haul.check - Haul.kg)
 
-full.cad.dat.short.test2 <- full.cad.dat.short.test %>%
+full.cad.dat.short.test2 <- full.cad.dat.short.test |>
   filter(dff != 0)
 dim(full.cad.dat.short.test2)
 # [1] 0 5
 
+
 #----------------------------------------------------
 # Join Data Sets
 #----------------------------------------------------
+
+# To make Supplementary data table 1, all years were previously included. But here only 2008 and 2012 to 2019 data will be kept to match the U.S. Survey data.
+
+canadian.dat.short <- canadian.dat.short |>
+  filter(Year > 2007 & !Year %in% c(2009:2011) & Year < 2020)
 
 full.dat <- rbind(full.us.dat.short,
                   canadian.dat.short)
@@ -245,9 +251,9 @@ full.dat <- rbind(full.us.dat.short,
 # Create count data (this is a work around)
 #----------------------------------------------------
 
-full.dat2 <- full.dat %>%
-  group_by(keys, len.bin) %>%
-  mutate(lenBin.nb = n()) %>%
+full.dat2 <- full.dat |>
+  group_by(keys, len.bin) |>
+  mutate(lenBin.nb = n()) |>
   ungroup()
 
 # View(full.dat2)
@@ -278,7 +284,7 @@ borrowed.cad.haul.comps <- fread(
 # Plot individual estimated weights per haul by length
 ## Note this includes the pseudo values!
 Hybrid.reweighting.w.correction.full.dat.summer <-
-  full.dat2 %>%
+  full.dat2 |>
   # Note pre-2008 is rather uncertain and the
   # U.S. survey did not run from 2009-2011 during
   # the summer months. Spring sampling was also
@@ -289,9 +295,8 @@ Hybrid.reweighting.w.correction.full.dat.summer <-
            scientific_name == "Sardinops sagax" &
            !keys %in% borrowed.us.haul.comps$keys &
            !keys %in% borrowed.cad.haul.comps$keys
-         ) %>%
- ggplot(.,
-        aes(x = standard_length, 
+         ) |>
+ ggplot(aes(x = standard_length, 
             y = Bio_Weight_kg,
             color = keys)) + # Move color inside aes()
   geom_point(alpha = 0.5) + # Alpha helps see overlapping points
@@ -317,7 +322,7 @@ ggsave2(
 # Plot individual estimated weights per haul by length
 ## Note this includes the pseudo values!
 Hybrid.reweighting.w.correction.full.dat.spring  <-
-  full.dat2 %>%
+  full.dat2 |>
   # Note there is no Canadian survey during the Spring.
   # The U.S. survey did not run from past 2017 in 
   # the spring with the except of 2021. Spring sampling was also
@@ -328,9 +333,8 @@ Hybrid.reweighting.w.correction.full.dat.spring  <-
            scientific_name == "Sardinops sagax" &
            !keys %in% borrowed.us.haul.comps$keys &
            !keys %in% borrowed.cad.haul.comps$keys
-         ) %>%
-  ggplot(.,
-         aes(x = standard_length, 
+         ) |>
+  ggplot(aes(x = standard_length, 
              y = Bio_Weight_kg,
              color = keys)) + # Move color inside aes(),
   geom_point(alpha = 0.5) + # Alpha helps see overlapping points
@@ -355,7 +359,7 @@ ggsave2(
 
 # Plot individual estimated weights per haul by length
 scaled.reweighting.w.correction.full.dat.summer <-
-  full.dat2 %>%
+  full.dat2 |>
   # Note pre-2008 is rather uncertain and the
   # U.S. survey did not run from 2009-2011 during
   # the summer months. Spring sampling was also
@@ -366,12 +370,12 @@ scaled.reweighting.w.correction.full.dat.summer <-
            scientific_name == "Sardinops sagax" &
            !keys %in% borrowed.us.haul.comps$keys &
            !keys %in% borrowed.cad.haul.comps$keys
-         ) %>%
+         ) |>
   # Use fct_relevel to manually set the category order
   mutate(
     len.bin = 
       fct_relevel(as.character(len.bin), "less150", "150to200", "200+")
-  ) %>%
+  ) |>
   ggplot(aes(x = keys,
              y = Scaled_Biomass_Contribution,
              fill = len.bin)) +
@@ -405,7 +409,7 @@ ggsave2(
 
 # Plot individual estimated weights per haul by length
 scaled.reweighting.w.correction.full.dat.spring <-
-  full.dat2 %>%
+  full.dat2 |>
   # Note pre-2008 is rather uncertain and the
   # U.S. survey did not run from 2009-2011 during
   # the summer months. Spring sampling was also
@@ -415,12 +419,12 @@ scaled.reweighting.w.correction.full.dat.spring <-
            scientific_name == "Sardinops sagax" &
            !keys %in% borrowed.us.haul.comps$keys &
            !keys %in% borrowed.cad.haul.comps$keys
-         ) %>%
+         ) |>
   # Use fct_relevel to manually set the category order
   mutate(
     len.bin = 
       fct_relevel(as.character(len.bin), "less150", "150to200", "200+")
-  ) %>%
+  ) |>
   ggplot(aes(x = keys,
              y = Scaled_Biomass_Contribution,
              fill = len.bin)) +
@@ -458,9 +462,9 @@ land.barrier <- read_sf(here(dir, "Data", "Shapefiles", "land.barrier.shp"))
 
 # Read full resolution - Continental land masses and ocean islands, except Antarctica.
 ##land.barrier <- read_sf(here(dir, "Data", "Shapefiles", "gshhg-shp-2.3.7",
-##                             "GSHHS_shp", "f", "GSHHS_f_L1.shp")) %>%
+##                             "GSHHS_shp", "f", "GSHHS_f_L1.shp")) |>
 ### Project to same coordinate system
-##st_transform(crs = st_crs(TwoSeas.dat)) %>%
+##st_transform(crs = st_crs(TwoSeas.dat)) |>
 ### Trim to area extent
 ##  st_crop(st_bbox(TwoSeas.dat))
 
@@ -478,8 +482,8 @@ There is moderate to strong temporal autocorrelation in the model as the modelli
 
 ```{r, allyears.future.analyses}
 
-AllYears.dat <- full.dat2 %>%
-  mutate(YearSeas = paste(year(date), Season, sep = "")) %>%
+AllYears.dat <- full.dat2 |>
+  mutate(YearSeas = paste(year(date), Season, sep = "")) |>
   mutate(Season.nm = 
            case_when(
              grepl("Spring", Season) ~ 1,
@@ -501,12 +505,12 @@ These are the years where you will actually run the model.
 
 ```{r, 2season.structure}
 
-TwoSeas.dat <- full.dat2 %>%
+TwoSeas.dat <- full.dat2 |>
   # Remove fall entries and years where there is low data
-  filter(Season != "Fall" & !Year %in% c(2001:2007, 2009:2011)) %>%
-  mutate(YearSeas = paste(year(date), Season, sep = "")) %>%
+  filter(Season != "Fall" & !Year %in% c(2001:2007, 2009:2011)) |>
+  mutate(YearSeas = paste(year(date), Season, sep = "")) |>
   # Remove summer hauls where they only sampled in north
-  #filter(!YearSeas %in% c("2004Summer", "2005Summer", "2006Summer")) %>%
+  #filter(!YearSeas %in% c("2004Summer", "2005Summer", "2006Summer")) |>
   mutate(Season.nm = 
            case_when(
              grepl("Spring", Season) ~ 1,
@@ -519,7 +523,7 @@ TwoSeas.dat <- full.dat2 %>%
 unique(TwoSeas.dat$YearSeas)
 unique(TwoSeas.dat$YearSeas.nm)
 
-test <- full.dat2 %>% filter(Year == 2025)
+test <- full.dat2 |> filter(Year == 2025)
 unique(test$Country)
 # [1] "USA"
 
@@ -545,8 +549,8 @@ year_season_sequence <- data.frame(
 # Print the resulting sequence
 year_season_sequence
 
-missing_seas <- year_season_sequence %>%
-  anti_join(TwoSeas.dat, by = "YearSeas.nm") %>%
+missing_seas <- year_season_sequence |>
+  anti_join(TwoSeas.dat, by = "YearSeas.nm") |>
   select(YearSeas.nm)
 
 missing_seas
@@ -561,7 +565,7 @@ missing_seas
 all_levels2 <- sort(unique(c(TwoSeas.dat$YearSeas.nm, missing_seas$YearSeas.nm)))
 
 # Define extra time steps to estimate
-est.missing.time2 <- unique(missing_seas$YearSeas.nm) %>%
+est.missing.time2 <- unique(missing_seas$YearSeas.nm) |>
   sort
 
 save(est.missing.time2, file = here(dir, "Data", "ExampleRun",
@@ -573,19 +577,19 @@ save(est.missing.time2, file = here(dir, "Data", "ExampleRun",
 
 ```{r, create.spatial.object}
 
-TwoSeas.dat.st <- TwoSeas.dat %>%
-  group_by(keys) %>%
-  mutate(FID = keys) %>%
-  make_transect_sf(., crs = 4326) %>%
+TwoSeas.dat.st <- TwoSeas.dat |>
+  group_by(keys) |>
+  mutate(FID = keys) |>
+  make_transect_sf(., crs = 4326) |>
   ungroup()
 
 # Explore the data
 ## Because we have sparse data with biased sampling, remove 2003 and 2007 where sampling occurred over a limited range and where there are problems in estimated transect location.
 
-TwoSeas.dat.0s <- TwoSeas.dat.st %>%
+TwoSeas.dat.0s <- TwoSeas.dat.st |>
   filter(scientific_name == "Other")
 
-TwoSeas.sar <- TwoSeas.dat.st %>%
+TwoSeas.sar <- TwoSeas.dat.st |>
   filter(scientific_name != "Other")
 
 ggplot() +
@@ -607,11 +611,11 @@ st_bbox(TwoSeas.sar)
 aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
 
 # Extract polygon centers
-TwoSeas.dat2 <- TwoSeas.dat.st %>%
-  st_transform(., crs = aea_custom) %>%
+TwoSeas.dat2 <- TwoSeas.dat.st |>
+  st_transform(., crs = aea_custom) |>
   # Extract the centre of the transect (this is in km)
   mutate(X = st_coordinates(st_centroid(.))[,1]/1000,
-         Y = st_coordinates(st_centroid(.))[,2]/1000) %>%
+         Y = st_coordinates(st_centroid(.))[,2]/1000) |>
   st_drop_geometry() 
 
 # View(TwoSeas.dat)
@@ -692,15 +696,15 @@ points(TwoSeas.dat_filtered$X, TwoSeas.dat_filtered$Y, col = "red", pch = 19,
 # Sum over year, season, and country
 #------------------------------------------------------
 
-TwoSeas.dat_filtered.test <- TwoSeas.dat_filtered %>%
-  group_by(Year, Season, keys) %>%
-  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") %>%
+TwoSeas.dat_filtered.test <- TwoSeas.dat_filtered |>
+  group_by(Year, Season, keys) |>
+  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") |>
   ungroup()
 
 # Sum over year and season
-TwoSeas.dat_filtered.all <- TwoSeas.dat_filtered %>%
-  group_by(Year, Season) %>%
-  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") %>%
+TwoSeas.dat_filtered.all <- TwoSeas.dat_filtered |>
+  group_by(Year, Season) |>
+  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") |>
   ungroup()
 
 #------------------------------------------------------
@@ -709,10 +713,10 @@ TwoSeas.dat_filtered.all <- TwoSeas.dat_filtered %>%
 
 trend.check <-
 ggplot() +
-  geom_line(data = TwoSeas.dat_filtered.all %>% 
+  geom_line(data = TwoSeas.dat_filtered.all |> 
               filter(Season == "Summer"),
             aes(x = Year, y = Haul.kg/1000)) +
-  geom_point(data = TwoSeas.dat_filtered.test %>% 
+  geom_point(data = TwoSeas.dat_filtered.test |> 
                filter(Season == "Summer"),
              aes(x = Year, y = Haul.kg/1000, group = keys)) +
   theme_bw(base_size = 20) +
@@ -740,14 +744,14 @@ ggsave2(filename="S2.trend.check.w.integrated.Canadian.dat.wght.only.jpeg",
 # Sum over year, season, and country
 #------------------------------------------------------
 
-TwoSeas.dat_filtered.country.test <- TwoSeas.dat_filtered %>%
-  group_by(Year, Season, Country, keys) %>%
-  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") %>%
+TwoSeas.dat_filtered.country.test <- TwoSeas.dat_filtered |>
+  group_by(Year, Season, Country, keys) |>
+  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") |>
   ungroup()
 
-TwoSeas.dat_filtered.country <- TwoSeas.dat_filtered %>%
-  group_by(Year, Season, Country) %>%
-  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") %>%
+TwoSeas.dat_filtered.country <- TwoSeas.dat_filtered |>
+  group_by(Year, Season, Country) |>
+  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") |>
   ungroup()
 
 #------------------------------------------------------
@@ -756,10 +760,10 @@ TwoSeas.dat_filtered.country <- TwoSeas.dat_filtered %>%
 
 trend.check2 <-
 ggplot() +
-  geom_line(data = TwoSeas.dat_filtered.country %>% 
+  geom_line(data = TwoSeas.dat_filtered.country |> 
               filter(Season == "Summer"),
             aes(x = Year, y = Haul.kg/1000)) +
-  geom_point(data = TwoSeas.dat_filtered.country.test %>% 
+  geom_point(data = TwoSeas.dat_filtered.country.test |> 
                filter(Season == "Summer"),
              aes(x = Year, y = Haul.kg/1000, group = keys)) +
   facet_wrap(~Country) +
@@ -801,7 +805,7 @@ limits <- data.frame(
   Y = c(40.02236, 34.44872)
   ) 
 
-limits.sf <- st_as_sf(limits, coords = c("X", "Y"), crs = 4326) %>%
+limits.sf <- st_as_sf(limits, coords = c("X", "Y"), crs = 4326) |>
   st_transform(., crs = aea_custom)
 
 # Create northern stock boundary (Westernmost Point, CA)
@@ -814,16 +818,16 @@ point.concept <- st_coordinates(limits.sf)[2,2]/1000
 # Create upper and lower spatial domain limits
 #------------------------------------------------------
 
-hlines <- eez %>%
-  filter(REGION == "Pacific Coast") %>%
-  st_transform(., crs = aea_custom) %>%
+hlines <- eez |>
+  filter(REGION == "Pacific Coast") |>
+  st_transform(., crs = aea_custom) |>
   mutate(
     # Create southern US EEZ boundary
     ymin = st_bbox(.)["ymin"]/1000,
     # Create northern US EEZ boundary
     ymax = st_bbox(.)["ymax"]/1000
-    ) %>%
-    st_drop_geometry() %>%
+    ) |>
+    st_drop_geometry() |>
     select(ymin, ymax)
 
 #------------------------------------------------------
@@ -831,7 +835,7 @@ hlines <- eez %>%
 #------------------------------------------------------
 
 TwoSeas.dat_filtered <- 
-  TwoSeas.dat_filtered %>%
+  TwoSeas.dat_filtered |>
     mutate(latBin = 
              case_when(
                Y < unique(hlines$ymin) ~ "BajaCa",
@@ -849,17 +853,17 @@ TwoSeas.dat_filtered <-
 # Summarise the data
 #------------------------------------------------------
 
-TwoSeas.dat_filtered.latitude.test <- TwoSeas.dat_filtered %>%
-  filter(scientific_name == "Sardinops sagax") %>%
-  group_by(Year, Season, latBin, keys) %>%
-  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") %>%
+TwoSeas.dat_filtered.latitude.test <- TwoSeas.dat_filtered |>
+  filter(scientific_name == "Sardinops sagax") |>
+  group_by(Year, Season, latBin, keys) |>
+  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") |>
   ungroup()
 
 
-TwoSeas.dat_filtered.latitude <- TwoSeas.dat_filtered %>%
-  filter(scientific_name == "Sardinops sagax") %>%
-  group_by(Year, Season, latBin) %>%
-  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") %>%
+TwoSeas.dat_filtered.latitude <- TwoSeas.dat_filtered |>
+  filter(scientific_name == "Sardinops sagax") |>
+  group_by(Year, Season, latBin) |>
+  summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") |>
   ungroup()
 
 #------------------------------------------------------
@@ -868,12 +872,12 @@ TwoSeas.dat_filtered.latitude <- TwoSeas.dat_filtered %>%
 
 trend.check3 <-
 ggplot() +
-  geom_line(data = TwoSeas.dat_filtered.latitude %>% 
+  geom_line(data = TwoSeas.dat_filtered.latitude |> 
               filter(Season == "Summer"),
             aes(x = Year, y = Haul.kg/1000, col = latBin)) +
   # Force a linear trend so they don't wiggle ridiculously
   geom_smooth(method = "lm", se = FALSE, linewidth = 1.5) +
-  geom_point(data = TwoSeas.dat_filtered.latitude.test %>% 
+  geom_point(data = TwoSeas.dat_filtered.latitude.test |> 
                filter(Season == "Summer"),
              aes(x = Year, y = Haul.kg/1000, col = latBin, group = keys)) +
   facet_wrap(~latBin) +
@@ -905,9 +909,9 @@ Here "BajaCa", "ScaBaj", "Califo" are all very similar and can probably be group
 #------------------------------------------------------
 
 TwoSeas.dat_filtered.south <- 
-  TwoSeas.dat_filtered %>%
+  TwoSeas.dat_filtered |>
   filter(latBin %in% c("BajaCa", "ScaBaj", "Califo")
-         ) %>%
+         ) |>
   # Group BajaCa, ScaBaj, and Califo
   mutate(latBin = "SofMendocino",
          Present = 
@@ -922,9 +926,9 @@ TwoSeas.dat_filtered.south <-
 #------------------------------------------------------
 
 TwoSeas.dat_filtered.north <- 
-  TwoSeas.dat_filtered %>%
+  TwoSeas.dat_filtered |>
   filter(!latBin %in% c("BajaCa", "ScaBaj", "Califo")
-         ) %>%
+         ) |>
   # Group BajaCa, ScaBaj, and Califo
   mutate(Present = 
            case_when(
@@ -961,85 +965,85 @@ fwrite(TwoSeas.dat_filtered.Binned,
 
 ```{r, rough.models}
 
-TwoSeas.dat_filtered.Binned.test <- TwoSeas.dat_filtered.Binned %>%
-  group_by(Year, Season, latBin, keys, YearSeas.nm) %>%
+TwoSeas.dat_filtered.Binned.test <- TwoSeas.dat_filtered.Binned |>
+  group_by(Year, Season, latBin, keys, YearSeas.nm) |>
   summarise(Haul.kg = round(sum(Scaled_Biomass_Contribution), 7),
             Haul.check = first(Species_weight),
-            Fin_sweep.m3 = first(Fin_sweep.m3), .groups = "keep") %>%
+            Fin_sweep.m3 = first(Fin_sweep.m3), .groups = "keep") |>
   ungroup()
 
-test <- TwoSeas.dat_filtered.Binned.test %>%
+test <- TwoSeas.dat_filtered.Binned.test |>
   mutate(diff = Haul.kg - Haul.check)
 
 unique(test$diff)
 
 lm(Haul.kg ~ YearSeas.nm, 
-   data = TwoSeas.dat_filtered.Binned.test %>% 
-     filter(Season == "Summer")) %>% 
+   data = TwoSeas.dat_filtered.Binned.test |> 
+     filter(Season == "Summer")) |> 
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
   labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
 
 lm(Haul.kg ~ latBin, 
-   data = TwoSeas.dat_filtered.Binned.test %>% 
-     filter(Season == "Summer")) %>%
+   data = TwoSeas.dat_filtered.Binned.test |> 
+     filter(Season == "Summer")) |>
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
   labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
 
 lm(Haul.kg ~ latBin + YearSeas.nm, 
-   data = TwoSeas.dat_filtered.Binned.test %>% 
-     filter(Season == "Summer")) %>% 
+   data = TwoSeas.dat_filtered.Binned.test |> 
+     filter(Season == "Summer")) |> 
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
   labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
 
 lm(Haul.kg ~ latBin + YearSeas.nm, offset = log(Fin_sweep.m3), 
-   data = TwoSeas.dat_filtered.Binned.test %>% 
-     filter(Season == "Summer")) %>% 
+   data = TwoSeas.dat_filtered.Binned.test |> 
+     filter(Season == "Summer")) |> 
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
   labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
 
 lm(Haul.kg ~ latBin, offset = log(Fin_sweep.m3), 
-   data = TwoSeas.dat_filtered.Binned.test %>% 
-     filter(Season == "Summer")) %>% 
+   data = TwoSeas.dat_filtered.Binned.test |> 
+     filter(Season == "Summer")) |> 
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
   labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
 
 lm(Haul.kg ~ YearSeas.nm, offset = log(Fin_sweep.m3), 
-   data = TwoSeas.dat_filtered.Binned.test %>%
-     filter(Season == "Summer")) %>% 
+   data = TwoSeas.dat_filtered.Binned.test |>
+     filter(Season == "Summer")) |> 
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
   labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
 
 lm(Haul.kg ~ latBin + YearSeas.nm, offset = log(Fin_sweep.m3*30), 
-   data = TwoSeas.dat_filtered.Binned.test %>% 
-     filter(Season == "Summer")) %>%
+   data = TwoSeas.dat_filtered.Binned.test |> 
+     filter(Season == "Summer")) |>
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
   labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
 
 lm(Haul.kg ~ YearSeas.nm, offset = log(Fin_sweep.m3*30), 
-   data = TwoSeas.dat_filtered.Binned.test %>% 
-     filter(Season == "Summer")) %>%
+   data = TwoSeas.dat_filtered.Binned.test |> 
+     filter(Season == "Summer")) |>
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
   labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
 
 lm(Haul.kg ~ latBin, offset = log(Fin_sweep.m3*30), 
-   data = TwoSeas.dat_filtered.Binned.test %>% 
-     filter(Season == "Summer")) %>%
+   data = TwoSeas.dat_filtered.Binned.test |> 
+     filter(Season == "Summer")) |>
   ggplot(aes(.fitted, .resid)) +
   geom_point() +
   geom_hline(yintercept = 0)+
@@ -1052,9 +1056,9 @@ lm(Haul.kg ~ latBin, offset = log(Fin_sweep.m3*30),
 ```{r}
 
 # 1. Prepare Spatial and Temporal Features
-TwoSeas.2008_2019.sf <- TwoSeas.dat_filtered.Binned %>% 
-  filter(Season == "Summer" & Year %in% c(2008, 2012:2019)) %>%
-  make_transect_sf(crs = 4326) %>%
+TwoSeas.2008_2019.sf <- TwoSeas.dat_filtered.Binned |> 
+  filter(Season == "Summer" & Year %in% c(2008, 2012:2019)) |>
+  make_transect_sf(crs = 4326) |>
   mutate(latBin = 
            case_when(
              latBin %in% c("BajaCa", "SCaBaj", "Califo") ~ "SofMendocino",  # Fixed 'SCaBaj'
@@ -1073,8 +1077,8 @@ TwoSeas.2008_2019.sf <- TwoSeas.dat_filtered.Binned %>%
 unique(TwoSeas.2008_2019.sf$latBin)
 # [1] "SofMendocino"  "PNWUSA"  "Canada"  
 
-TwoSeas.2008_2019_prep.sf <- TwoSeas.2008_2019.sf %>%
-  separate(date, into = c("Year_num", "Month", "Day"), remove = FALSE) %>%
+TwoSeas.2008_2019_prep.sf <- TwoSeas.2008_2019.sf |>
+  separate(date, into = c("Year_num", "Month", "Day"), remove = FALSE) |>
   mutate(
     Year = as.numeric(Year_num),
     Month_num = as.numeric(Month),
@@ -1082,20 +1086,20 @@ TwoSeas.2008_2019_prep.sf <- TwoSeas.2008_2019.sf %>%
     MonthDay_str = paste0(Month_abb, ". ", Day),
     MonthDay_idx = as.numeric(paste0(Month, Day)),
     CountryLatBin = paste(Country, " - ", latBin)
-  ) %>%
-  group_by(Year, CountryLatBin, keys) %>% 
+  ) |>
+  group_by(Year, CountryLatBin, keys) |> 
   mutate(
     # Extract the lowest latitude from the transect key
     minLAT = min(st_coordinates(geometry)[, "Y"]),
     # Extract the greatest latitude from the transect key
     maxLAT = max(st_coordinates(geometry)[, "Y"])
-    ) %>%
+    ) |>
   ungroup() 
 
 # 2. Build Consolidated Summary Table
-TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf %>%
-  st_drop_geometry() %>%
-  group_by(Year, CountryLatBin) %>%
+TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf |>
+  st_drop_geometry() |>
+  group_by(Year, CountryLatBin) |>
   summarise(
     # Temporal range per bin
     MonthDay = paste(
@@ -1141,8 +1145,8 @@ TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf %>%
           paste(ordered_bins, collapse = " & ")
           }
       }
-    ) %>%
-  ungroup() %>%
+    ) |>
+  ungroup() |>
   select(
     Year, MonthDay, `Country - Strata` = CountryLatBin, `Total Hauls`, `Nb. Absent Hauls`,
     `Total Catch (kg)`, `Length Bins (cm)`, `n sampled`, Latitudes
@@ -1154,7 +1158,7 @@ View(TwoSeas.2008_2019survey.dat)
 fwrite(TwoSeas.2008_2019survey.dat, here("Final.Results", "SummerSummaryTable.csv"))
 
 # Calculate dataset-wide summary statistics
-overall_stats <- TwoSeas.2008_2019survey.dat %>%
+overall_stats <- TwoSeas.2008_2019survey.dat |>
   summarise(
     Total_Hauls       = sum(`Total Hauls`),
     Absent_Hauls      = sum(`Nb. Absent Hauls`),

@@ -121,15 +121,9 @@ len_less150 <- len.bins |>
   filter(standard_length < 15.0) |>
   mutate(len.bin = "less150")
 
-sort(unique(len_less150$age))
-# [1] -2 -1  0  1
-
 len_150to200 <- len.bins |>
   filter(standard_length >= 15.0 & standard_length < 20.0) |>
   mutate(len.bin = "150to200")
-
-sort(unique(len_150to200$age))
-# [1] 1 2 3 4
 
 len200plus <- len.bins |>
   filter(standard_length >= 20.0) |>
@@ -996,12 +990,14 @@ range(test.range$stop_latitude)
 # 2003
 #----------------------------------------------------------------------------
 test2003 <- area.transects.final.2003.2005 |> filter(Year == 2003)
-unique(test2003$Month)
-# [1] 7
 unique(test2003$cruise)
 # [1] 200307
 unique(test2003$ship)
 # [1] "FR"
+unique(test2003$Month)
+# [1] 7
+unique(test2003$cluster.grp)
+# [1] "night Trawl"
 min(test2003$start_latitude)
 # [1] 42.9816
 min(test2003$stop_latitude)
@@ -1010,8 +1006,6 @@ max(test2003$start_latitude)
 # [1] 48.0003
 max(test2003$stop_latitude)
 # [1] 48.0001
-unique(test2003$cluster.grp)
-# [1] "night Trawl"
 
 #----------------------------------------------------------------------------
 # 2004
@@ -1076,10 +1070,10 @@ unique(test2005$cluster.grp)
 # [1] "night Trawl"
 
 test200503 <- test2005 |> filter(cruise == 200503)
-unique(test200503$Month)
-# [1] 3
 unique(test200503$ship)
 # [1] "FR"
+unique(test200503$Month)
+# [1] 3
 min(test200503$start_latitude)
 # [1] 42.0015
 min(test200503$stop_latitude)
@@ -1090,10 +1084,10 @@ max(test200503$stop_latitude)
 # [1]  48.067
 
 test200504 <- area.transects.final.2003.2005 |> filter(cruise == 200504)
-unique(test200504$Month)
-# [1] 4
 unique(test200504$ship)
 # [1] "JD"
+unique(test200504$Month)
+# [1] 4
 min(test200504$start_latitude)
 # [1] 32.848
 min(test200504$stop_latitude)
@@ -1171,12 +1165,14 @@ range(test.range2$stop_latitude)
 #----------------------------------------------------------------------------
 
 test2006 <- area.transects.final.2006.2010 |> filter(Year == 2006)
-unique(test2006$Month)
-# [1]
 unique(test2006$cruise)
 # [1] 200604
 unique(test2006$ship)
 # [1] "OD"
+unique(test2006$Month)
+# [1] 5 4
+unique(test2006$cluster.grp)
+# [1] "night Trawl"
 min(test2006$start_latitude)
 # [1] 32.8306
 min(test2006$stop_latitude)
@@ -1185,8 +1181,6 @@ max(test2006$start_latitude)
 # [1] 47.8026
 max(test2006$stop_latitude)
 # [1] 47.829
-unique(test2006$cluster.grp)
-# [1] "night Trawl"
 
 #----------------------------------------------------------------------------
 # 2007
@@ -1201,22 +1195,22 @@ unique(test2007$cluster.grp)
 # [1] "night Trawl"
 
 test200704 <- test2007 |> filter(cruise == 200704)
-unique(test200704$Month)
-# [1]
 unique(test200704$ship)
 # [1] "LB" "JD"
-
-test200704LBJD <- test2007 |> filter(cruise == 200704 & ship %in% c("LB", "JD"))
-min(test200704LBJD$start_latitude)
+unique(test200704$Month)
+# [1] 4
+min(test200704$start_latitude)
 # [1] 31.7921
-min(test200704LBJD$stop_latitude)
+min(test200704$stop_latitude)
 # [1] 31.7956
-max(test200704LBJD$start_latitude)
+max(test200704$start_latitude)
 # [1] 36.3951
-max(test200704LBJD$stop_latitude)
+max(test200704$stop_latitude)
 # [1] 36.3806
 
 test200706 <- test2007 |> filter(cruise ==  200706)
+unique(test200706$ship)
+# [1] "MF"
 unique(test200706$Month)
 # [1] 6
 min(test200706$start_latitude)
@@ -1241,10 +1235,10 @@ unique(test2008$cluster.grp)
 # [1] "night Trawl"
 
 test200804 <- test2008 |> filter(cruise ==  200804)
-unique(test200804$Month)
-# [1] 4
 unique(test200804$ship)
 # [1] "JD" "MF"
+unique(test200804$Month)
+# [1] 4
 min(test200804$start_latitude)
 # [1] 31.5053
 min(test200804$stop_latitude)
@@ -1255,10 +1249,10 @@ max(test200804$stop_latitude)
 # [1] 48.4121
 
 test200807 <- test2008 |> filter(cruise ==  200807)
-unique(test200807$Month)
-# [1] 7 8
 unique(test200807$ship)
 # [1] "JD" "MF"
+unique(test200807$Month)
+# [1] 7 8
 min(test200807$start_latitude)
 # [1] 37.0545
 min(test200807$stop_latitude)
@@ -1275,10 +1269,12 @@ max(test200807$stop_latitude)
 test2009 <- area.transects.final.2006.2010 |> filter(Year == 2009)
 unique(test2009$cruise)
 # [1] 200904
-unique(test2009$Month)
-# [1] 4 5
 unique(test2009$ship)
 # [1] "FR"
+unique(test2009$Month)
+# [1] 4 5
+unique(test2009$cluster.grp)
+# [1] "night Trawl"
 min(test2009$start_latitude)
 # [1] 31.5053
 min(test2009$stop_latitude)
@@ -1287,8 +1283,6 @@ max(test2009$start_latitude)
 # [1] 36.539
 max(test2009$stop_latitude)
 # [1] 36.5136
-unique(test2009$cluster.grp)
-# [1] "night Trawl"
 
 #----------------------------------------------------------------------------
 # 2010
@@ -1297,12 +1291,12 @@ unique(test2009$cluster.grp)
 test2010 <- area.transects.final.2006.2010 |> filter(Year == 2010)
 unique(test2010$cruise)
 # [1] 201004
-unique(test2010$Month)
-unique(test2010$cluster.grp)
-# [1] "night Trawl"
-
 unique(test2010$ship)
 # [1] "FR" "MF"
+unique(test2010$Month)
+# [1] 4
+unique(test2010$cluster.grp)
+# [1] "night Trawl"
 min(test2010$start_latitude)
 # [1] 32.4881
 min(test2010$stop_latitude)
@@ -1382,10 +1376,12 @@ range(test.range3$stop_latitude)
 test2011 <- area.transects.final.2011.2014 |> filter(Year == 2011)
 unique(test2011$cruise)
 # [1] 201104
-unique(test2011$Month)
-# [1] 4 3
 unique(test2011$ship)
 # [1]  "FR" "MF"
+unique(test2011$Month)
+# [1] 4 3
+unique(test2011$cluster.grp)
+# [1] "night Trawl"
 min(test2011$start_latitude)
 # [1] 31.9796
 min(test2011$stop_latitude)
@@ -1394,8 +1390,6 @@ max(test2011$start_latitude)
 # [1] 46.7451
 max(test2011$stop_latitude)
 # [1] 46.768
-unique(test2011$cluster.grp)
-# [1] "night Trawl"
 
 #----------------------------------------------------------------------------
 # 2012
@@ -1410,10 +1404,10 @@ unique(test2012$cluster.grp)
 # [1] "night Trawl"
 
 test201204 <- test2012 |> filter(cruise ==  201204)
-unique(test201204$Month)
-# [1] 4
 unique(test201204$ship)
 # [1] "OS" "SH"
+unique(test201204$Month)
+# [1] 4
 min(test201204$start_latitude)
 # [1] 31.6881
 min(test201204$stop_latitude)
@@ -1424,10 +1418,10 @@ max(test201204$stop_latitude)
 # [1] 38.0678
 
 test201207 <- test2012 |> filter(cruise ==  201207)
-unique(test201207$Month)
-# [1] 7 8 6
 unique(test201207$ship)
 # [1] "SH"
+unique(test201207$Month)
+# [1] 7 8 6
 min(test201207$start_latitude)
 # [1] 35.9055
 min(test201207$stop_latitude)
@@ -1438,10 +1432,10 @@ max(test201207$stop_latitude)
 # [1] 50.6525
 
 test201208 <- test2012 |> filter(cruise ==  201208)
+unique(test201208$ship)
+# [1] "OS"
 unique(test201208$Month)
 # [1] 8 7
-unique(test201207$ship)
-# [1] "SH"
 min(test201208$start_latitude)
 # [1] 31.3443
 min(test201208$stop_latitude)
@@ -1467,10 +1461,10 @@ unique(test2013$cluster.grp)
 # [1] "night Trawl"
 
 test201304 <- test2013 |> filter(cruise ==  201304)
-unique(test201304$Month)
-# [1] 4
 unique(test201304$ship)
 # [1] "OS" "SH"
+unique(test201304$Month)
+# [1] 4
 min(test201304$start_latitude)
 # [1] 32.3631
 min(test201304$stop_latitude)
@@ -1481,10 +1475,10 @@ max(test201304$stop_latitude)
 # [1] 36.8228
 
 test201307 <- test2013 |> filter(cruise ==  201307)
-unique(test201307$Month)
-# [1] 7 8 6
 unique(test201307$ship)
 # [1] "SH"
+unique(test201307$Month)
+# [1] 7 8 6
 min(test201307$start_latitude)
 # [1] 33.808
 min(test201307$stop_latitude)
@@ -1507,10 +1501,10 @@ unique(test2014$cluster.grp)
 # [1] "night Trawl"
 
 test201404 <- test2014 |> filter(cruise ==  201404)
-unique(test201404$Month)
-# [1] 4 5
 unique(test201404$ship)
 # [1] "SH" "OS"
+unique(test201404$Month)
+# [1] 4 5
 min(test201404$start_latitude)
 # [1] 32.3631
 min(test201404$stop_latitude)
@@ -1521,10 +1515,10 @@ max(test201404$stop_latitude)
 # [1] 36.8228
 
 test201407 <- test2014 |> filter(cruise ==  201407)
-unique(test201407$Month)
-  # [1] 6 7 8
 unique(test201307$ship)
 # [1] "SH"
+unique(test201407$Month)
+  # [1] 6 7 8
 min(test201407$start_latitude)
 # [1] 35.0712
 min(test201407$stop_latitude)
@@ -1650,6 +1644,8 @@ unique(test2016$cluster.grp)
 test201604 <- test2016 |> filter(cruise ==  201604)
 unique(test201604$Month)
 # [1] 3 4
+unique(test201604$cluster.grp)
+# [1] "night Trawl"
 min(test201604$start_latitude)
 # [1] 37.9597
 min(test201604$stop_latitude)
@@ -1658,12 +1654,12 @@ max(test201604$start_latitude)
 # [1] 44.6422
 max(test201604$stop_latitude)
 # [1] 44.5952
-unique(test201604$cluster.grp)
-# [1] "night Trawl"
 
 test201607 <- test2016 |> filter(cruise ==  201607)
 unique(test201607$Month)
 # [1] 8 7 9
+unique(test201607$cluster.grp)
+# [1] "day Trawl"   "night Trawl"
 min(test201607$start_latitude)
 # [1] 32.6993
 min(test201607$stop_latitude)
@@ -1672,8 +1668,6 @@ max(test201607$start_latitude)
 # [1] 50.6817
 max(test201607$stop_latitude)
 # [1] 50.6805
-unique(test201607$cluster.grp)
-# [1] "day Trawl"   "night Trawl"
 
 #----------------------------------------------------------------------------
 # 2017
@@ -1718,10 +1712,12 @@ max(test201707$stop_latitude)
 test2018 <- area.transects.final.2015.2020 |> filter(Year == 2018)
 unique(test2018$cruise)
 # [1] 201807
-unique(test2018$Month)
-# [1] 7 8 9
 unique(test2018$ship)
 # [1] "RL"
+unique(test2018$Month)
+# [1] 7 8 9
+unique(test2018$cluster.grp)
+# [1] "night Trawl"
 min(test2018$start_latitude)
 # [1] 32.4682
 min(test2018$stop_latitude)
@@ -1730,20 +1726,20 @@ max(test2018$start_latitude)
 # [1] 50.6367
 max(test2018$stop_latitude)
 # [1] 50.6217
-unique(test2018$cluster.grp)
-# [1] "night Trawl"
 
 #----------------------------------------------------------------------------
-# 2018
+# 2019
 #----------------------------------------------------------------------------
 
 test2019 <- area.transects.final.2015.2020 |> filter(Year == 2019)
 unique(test2019$cruise)
 # [1] 201907
-unique(test2019$Month)
-# [1] 6 7 8 9
 unique(test2019$ship)
 # [1] "RL"
+unique(test2019$Month)
+# [1] 6 7 8 9
+unique(test2019$cluster.grp)
+# [1] "night Trawl"
 min(test2019$start_latitude)
 # [1] 32.1748
 min(test2019$stop_latitude)
@@ -1752,8 +1748,6 @@ max(test2019$start_latitude)
 # [1] 50.1553
 max(test2019$stop_latitude)
 # [1] 50.1087
-unique(test2019$cluster.grp)
-# [1] "night Trawl"
 
 ```
 
@@ -1858,12 +1852,14 @@ max(test202107$stop_latitude)
 #----------------------------------------------------------------------------
 
 test2022 <- area.transects.final.2021.2023 |> filter(Year == 2022)
-unique(test2022$Month)
-# [1] 7 8 9
 unique(test2022$cruise)
 # [1] 202207
 unique(test2022$ship)
 # [1] "RL"
+unique(test2022$Month)
+# [1] 7 8 9
+unique(test2022$cluster.grp)
+# [1] "night Trawl"
 min(test2022$start_latitude)
 # [1] 30.213
 min(test2022$stop_latitude)
@@ -1872,20 +1868,20 @@ max(test2022$start_latitude)
 # [1] 40.3787
 max(test2022$stop_latitude)
 # [1] 40.3442
-unique(test2022$cluster.grp)
-# [1] "night Trawl"
 
 #----------------------------------------------------------------------------
 # 2023
 #----------------------------------------------------------------------------
 
 test2023 <- area.transects.final.2021.2023 |> filter(Year == 2023)
-unique(test2023$Month)
-# [1] 7 9 10 11
 unique(test2023$cruise)
 # [1] 202307
 unique(test2023$ship)
 # [1] "RL" "SH"
+unique(test2023$Month)
+# [1] 7 9 10 11
+unique(test2023$cluster.grp)
+# [1] "night Trawl"
 min(test2023$start_latitude)
 # [1] 32.4228
 min(test2023$stop_latitude)
@@ -1894,8 +1890,6 @@ max(test2023$start_latitude)
 # [1] 48.1445
 max(test2023$stop_latitude)
 # [1] 48.1073
-unique(test2023$cluster.grp)
-# [1] "night Trawl"
 
 ```
 
@@ -1959,12 +1953,14 @@ range(test.range5$stop_latitude)
 #----------------------------------------------------------------------------
 
 test2024 <- area.transects.final.2024.2025 |> filter(Year == 2024)
-unique(test2024$Month)
-# [1] 7 8 9
 unique(test2024$cruise)
 # [1] 202407
 unique(test2024$ship)
 # [1] "RL" 
+unique(test2024$Month)
+# [1] 7 8 9
+unique(test2024$cluster.grp)
+# [1] "night Trawl"
 min(test2024$start_latitude)
 # [1] 28.6513
 min(test2024$stop_latitude)
@@ -1973,20 +1969,20 @@ max(test2024$start_latitude)
 # [1] 49.7967
 max(test2024$stop_latitude)
 # [1] 49.8043
-unique(test2024$cluster.grp)
-# [1] "night Trawl"
 
 #----------------------------------------------------------------------------
 # 2025
 #----------------------------------------------------------------------------
 
 test2025 <- area.transects.final.2024.2025 |> filter(Year == 2025)
-unique(test2025$Month)
-# [1] 6 7 8 9 
 unique(test2025$cruise)
 # [1] 202506
 unique(test2025$ship)
 # [1] "SH"
+unique(test2025$Month)
+# [1] 6 7 8 9 
+unique(test2025$cluster.grp)
+# [1] "night Trawl"
 min(test2025$start_latitude)
 # [1] 32.558
 min(test2025$stop_latitude)
@@ -1995,8 +1991,6 @@ max(test2025$start_latitude)
 # [1] 48.4641
 max(test2025$stop_latitude)
 # [1] 48.4816
-unique(test2025$cluster.grp)
-# [1] "night Trawl"
 
 ```
 
