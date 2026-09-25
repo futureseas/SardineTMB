@@ -13,7 +13,7 @@ output:
 rm(list=ls())
 gc()
 
-load.lib <- c("tidyverse", "data.table", "sf", "here")
+load.lib <- c("tidyverse", "data.table", "sf", "here", "rvest")
 
 install.lib <- load.lib[!load.lib %in% installed.packages()]
 

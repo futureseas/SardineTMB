@@ -1,0 +1,106 @@
+---
+title: "AcousticIndex.vs.sdmTMBIndex"
+author: "Stephanie Hopkins"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list=ls())
+gc()
+
+load.lib <- c("tidyverse", "data.table", "cowplot", "here")
+
+install.lib <- load.lib[!load.lib %in% installed.packages()]
+
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+
+dir <- here(getwd())
+              
+```
+
+# Read the acoustic data
+
+```{r, read.acoustic.indices}
+
+acoustic.indices <- fread(here(dir, "summerATsurvey_biomass.csv"), sep = ",") |>
+  rename(Year = yr,
+         est = obs,
+         se = stderr) |>
+  filter(Year %in% c(2008, 2012:2019)) |>
+  mutate(origin = "Acoustic",
+         est_mt = est,                      # Metric Tons estimate
+         ymin   = est_mt * exp(-1.96 * se), # Log-normal lower 95% bound
+         ymax   = est_mt * exp(1.96 * se)  # Log-normal upper 95% bound
+         ) |>
+  select(Year, origin, est_mt, ymin, ymax)
+
+View(acoustic.index)
+
+```
+
+# Read the sdmTMB baseline model indices
+
+```{r, read.sdmtmb.indices}
+
+sdmtmb.indices <- fread(here(dir, "Final.Results", "area.abundance.indices_FullBaseModel.csv"), sep = ",") |>
+    mutate(origin = "sdmTMB",
+           est_mt = est/1000,                        # Metric Tons estimate
+           ymin   = exp(log_est - 1.96 * se) / 1000, # Log-normal lower 95% bound
+           ymax   = exp(log_est + 1.96 * se) / 1000, # Log-normal upper 95% bound
+         ) |>
+  select(Year, origin, est_mt, ymin, ymax)
+
+View(sdmtmb.indices)
+
+```
+
+# Combine the two
+
+```{r, }
+
+# Combine both models
+combined_data <- bind_rows(acoustic.indices, sdmtmb.indices) |>
+  mutate(log_est_mt = log(est_mt),
+         log_ymin = log(ymin),
+         log_ymax = log(ymax)
+  )
+
+# Plot together with visible error bars
+index.comparision <-
+  ggplot(combined_data, aes(x = Year, y = log_est_mt, color = origin, group = origin)) +
+  geom_line(size = 0.8) +
+  geom_pointrange(aes(ymin = log_ymin, ymax = log_ymax),
+                  position = position_dodge(width = 0.1), 
+                  size = 0.5) +
+  labs(
+    title = "Acoustic Abundance Index Comparison",
+    x = "Year",
+    y = "Index ln(Metric Tons)",
+    color = "Model / Source"
+  ) +
+  scale_x_continuous(breaks = seq(2008, 2019, by = 2)) +
+  theme_bw(base_size = 18) +
+  theme(panel.grid.minor = element_blank())
+
+index.comparision
+
+ggsave2(
+  filename="USAcousticIndex.vs.sdmTMBIndex.withMultiNationalData.jpeg",
+  plot=index.comparision,
+  path=here(dir, "Final.Figures"),
+  device = "jpeg", 
+  dpi = 1200, 
+  width = 45,   
+  height = 21, 
+  units = "cm", 
+  limitsize = FALSE
+  )
+
+```
+

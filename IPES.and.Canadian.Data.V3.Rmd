@@ -363,7 +363,7 @@ range((comb.dat1999.2014.sf2$DISTANCE_TRAVELLED*1.852),
 # Check mean (converting nautical miles to km)
 mean((comb.dat1999.2014.sf2$DISTANCE_TRAVELLED*1.852), 
      na.rm = TRUE)
-# [1]3.461025
+# [1] 3.461025
 
 # Check where distance was not measured
 comb.dat1999.2014.sf2 |>
@@ -629,6 +629,8 @@ unique(is.na(test.na.length$standard_length))
 
 # For each haul, find number of samples
 final.comb.dat1999.2014 <- final.comb.dat1999.2014.stnd |>
+  # Filter out dropped years
+  
   # For each unique trip, sum the total sardine catch obs
     group_by(keys, UNIQUE_EVENT, sciname) |>
       mutate(NBRE_Haul = 
@@ -643,59 +645,60 @@ final.comb.dat1999.2014 <- final.comb.dat1999.2014.stnd |>
 dim(final.comb.dat1999.2014)
 # [1] 42155  52
 
-historic.sardine.obs.test <- final.comb.dat1999.2014 |> 
+filtered.sardine.obs.test <- final.comb.dat1999.2014 |> 
   filter(Year > 2007 & !Year %in% c(2009:2011))
 
-length(unique(historic.sardine.obs.test$keys))
+length(unique(filtered.sardine.obs.test$keys))
 # [1] 278
 
 # Subset the date to include hauls only where sardines are present
-historic.sardine.obs <- final.comb.dat1999.2014 |> 
+filtered.sardine.obs <- final.comb.dat1999.2014 |> 
   filter(Year > 2007 & !Year %in% c(2009:2011)) |>
    filter(sciname == "Sardinops sagax")
 
-sort(unique(historic.sardine.obs$Year))
+sort(unique(filtered.sardine.obs$Year))
 # [1] 2008 2012
-length(unique(historic.sardine.obs$keys))
+
+length(unique(filtered.sardine.obs$keys))
 # [1] 86
 
-length(unique(historic.sardine.obs$keys))/length(unique(historic.sardine.obs.test$keys))*100
+length(unique(filtered.sardine.obs$keys))/length(unique(filtered.sardine.obs.test$keys))*100
 # [1] 30.93525
 
 # Find the number of hauls where there are not weight obs.
-historic.sardine.wght.is.na <- historic.sardine.obs |>
+filtered.sardine.wght.is.na <- filtered.sardine.obs |>
   filter(is.na(weight) & !is.na(standard_length))
 
-length(unique(historic.sardine.wght.is.na$keys))[1]
+length(unique(filtered.sardine.wght.is.na$keys))[1]
 # [1] 51
 
 # Calculate the percent of missing weight data relative to all catches
-round((dim(historic.sardine.wght.is.na)[1]/dim(historic.sardine.obs)[1])*100, 
+round((dim(filtered.sardine.wght.is.na)[1]/dim(filtered.sardine.obs)[1])*100, 
       digits = 2)
 # [1] 58.61
 
 # Find the number of hauls where there are not length obs.
-historic.sardine.len.is.na <- historic.sardine.obs |>
+filtered.sardine.len.is.na <- filtered.sardine.obs |>
   filter(is.na(standard_length))
 
-length(unique(historic.sardine.len.is.na$keys))
+length(unique(filtered.sardine.len.is.na$keys))
 # [1] 20
 
 # Find the number of hauls where there are not weight & length obs.
-historic.sardine.wght.len.is.na <- historic.sardine.obs |>
+filtered.sardine.wght.len.is.na <- filtered.sardine.obs |>
   filter(is.na(weight) & is.na(standard_length))
 
-length(unique(historic.sardine.wght.len.is.na$keys))
+length(unique(filtered.sardine.wght.len.is.na$keys))
 # [1] 20
 
 # Calculate the percent of missing length data
-round(length(unique(historic.sardine.wght.len.is.na$keys))[1]/length(unique(historic.sardine.obs$keys))*100, 
+round(length(unique(filtered.sardine.wght.len.is.na$keys))[1]/length(unique(filtered.sardine.obs$keys))*100, 
       digits = 2)
 # [1] 23.26
 
 # Check if the same 0.25% is missing; if so, you can just
 # use the sardine.wght.len.is.na set
-identical(historic.sardine.wght.len.is.na, historic.sardine.len.is.na)
+identical(filtered.sardine.wght.len.is.na, filtered.sardine.len.is.na)
 # [1] TRUE
 
 ```
@@ -731,16 +734,7 @@ The objective here is to find the closest corresponding haul in time and space. 
 
 ```{r, define.target.and.source.data.frames}
 
-# Subset the data where we need to assign the nearest haul
-sardine.len.is.na <- final.comb.dat1999.2014 |>
-  filter(sciname == "Sardinops sagax" & is.na(standard_length))
-
-# Subset the data to include hauls only where sardines are present
-sardine.complete.obs <- final.comb.dat1999.2014 |> 
-  filter(!is.na(weight) & !is.na(standard_length),
-         sciname == "Sardinops sagax")
-
-colnames(sardine.len.is.na)
+colnames(filtered.sardine.len.is.na)
 #  [1] "BRIDGE_LOG_ID"          "TRIP_ID"               
 #  [3] "EVENT_DATE"             "Year"                  
 #  [5] "TOW_NUMBER"             "BEGIN_DEPLOYMENT_TIME" 
@@ -768,14 +762,14 @@ colnames(sardine.len.is.na)
 # [49] "WEIGHT_G"               "standard_length"       
 # [51] "weight"                 "NBRE_Haul"             
 
-unique(is.na(sardine.len.is.na))
+unique(is.na(filtered.sardine.len.is.na))
 
 #------------------------------------
 # Create transect data for data to fill
 #------------------------------------
 Hauls2Fill.clean_sf1999_2014 <- 
   make_transect_sf(
-  sardine.len.is.na, crs = 4326) |>
+  filtered.sardine.len.is.na, crs = 4326) |>
   mutate(DatSource = "2Fill") |>
   distinct() |>
   group_by(keys, DatSource, geometry) |>
@@ -784,8 +778,8 @@ Hauls2Fill.clean_sf1999_2014 <-
   ungroup() |>
   st_transform(crs = aea_custom) |>
   # Remove columns to fill
-  select(-c(standard_length, SPECIMEN_ID, FISH_ID, FISH_LAB_ID, 
-            FORKLENGTH_MM, weight, WEIGHT_G, CATCH_COUNT, NBRE_Haul)
+  select(-c(standard_length, weight, SPECIMEN_ID, FISH_ID, FISH_LAB_ID, 
+            FORKLENGTH_MM, WEIGHT_G, CATCH_COUNT, NBRE_Haul)
   )
 
 unique(is.na(Hauls2Fill.clean_sf1999_2014))
@@ -796,7 +790,8 @@ unique(is.na(Hauls2Fill.clean_sf1999_2014))
 #------------------------------------
 
 # Create unique grouping key - place holder to join on later
-keys.to.match.temp <- sardine.complete.obs |>
+keys.to.match.temp <- filtered.sardine.obs |>
+  filter(!is.na(weight)) |>
   make_transect_sf(crs = 4326) |>
   distinct() |>
   group_by(keys, geometry) |>
@@ -852,7 +847,7 @@ temp_matrix <- compute_time_diff_matrix(
   units = "secs")
 
 dim(temp_matrix)
-# [1] 99 14293
+# [1] 20 3547
 
 ```
 
@@ -1053,7 +1048,7 @@ dim(test.na.length)
 # [1] 0 51
 
 dim(allDat1999_2014)
-# [1] 49744    52
+# [1] 42760 51
 
 
 allDat1999_2014 <- allDat1999_2014 |>
@@ -1161,11 +1156,11 @@ result <- compare.bin.comps |>
 
 # How many hauls overall
 length(unique(compare.bin.comps$UNIQUE_EVENT))
-# [1] 359
+# [1] 283
 
 # How many hauls had more than 1 length bin
 length(unique(result$UNIQUE_EVENT))
-# [1] 178
+# [1] 159
 
 result <- result |>
   group_by(UNIQUE_EVENT) |>
@@ -1178,7 +1173,7 @@ result <- result |>
 partial.vals <- result |>
   filter(obs.real > 0)
 length(unique(partial.vals$UNIQUE_EVENT))
-# [1] 152
+# [1] 133
 
 # How many hauls have no weight values
 no.vals <- result |>
@@ -1311,7 +1306,7 @@ dim(error_report_1999.2014)
 # not representative of the haul
 summary(final_production_data1999.2014$Expansion_Factor)
 #  Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-# 0.000   1.799  10.187  28.897  32.395 774.209
+# 0.000   3.729  14.841  33.344  38.314 774.209
 
 # What the Summary tells us:
 
@@ -1319,11 +1314,11 @@ summary(final_production_data1999.2014$Expansion_Factor)
 
 ## Min (0.00): Some "subsamples" were actually heavier than the recorded species weight (likely a data entry error or a "dirty" weight including debris), effectively scaling the fish down.
 
-## Median (10.187): This is still very healthy. It means for half the data, about 1/10th (approx. 10%) of the catch was sampled. 
+## Median (14.841): This is still very healthy. It means for half the data, about 1/15th (approx. 6.7%) of the catch was sampled. 
 
-## The 3rd Quartile (32.395): At the 75th percentile, the expansion factor is 32.395. This means that for 75% of the data, at least 1/32rd of the total catch (3.03%) was sampled.
+## The 3rd Quartile (38.314): At the 75th percentile, the expansion factor is 38.314. This means that for 75% of the data, at least 1/38rd of the total catch (2.6%) was sampled.
 
-## Mean (28.897): Average expansion is roughly 29x, influenced by the tail of larger hauls.
+## Mean (33.344): Average expansion is roughly 33x, influenced by the tail of larger hauls.
 
 #-----------------------------
 # Check if expansion factors larger than 500 are common
@@ -1353,16 +1348,16 @@ print(biomass_audit_1999.2014)
  # A tibble: 4 × 4
 #   Expansion_Bin  Record_Count Total_Biomass_Represented Percent_of_Total_Biomass
 #   <fct>                 <int>                     <dbl>                    <dbl>
-# 1 1-10    (High)        24261                    10990.                     4.88
-# 2 10-100   (Med)        21663                   120293.                     53.4
-# 3 100-1000 (Low)         3348                    93901.                     41.7 
-# 4 Artifact                472                        0                       0
+# 1 01-10 (High)          17796                    10657.                     4.78
+# 2 10-100 (Med)          21591                   119268.                    53.4 
+# 3 100-1000 (Low)         3313                    93234.                    41.8 
+# 4 Artifact                 60                        0                      0  
 
-## High (1-10) - 4.88% of biomass -	These are the "anchor" hauls where they measured almost everything. Very high precision.
+## High (1-10) - 4.78% of biomass -	These are the "anchor" hauls where they measured almost everything. Very high precision.
 
 # Med (10-100) - 53.4% of biomass -	Here they measured 1%–10% of a haul, which is the industry standard for robust sampling. The fact that the majority of the biomass sits here is excellent.
 
-# Low (100-1000) - 41.7% of biomass -	These are "big hauls." They caught caught a lot of fish but could only sample a small fraction. This is common, but it's where the uncertainty lives.
+# Low (100-1000) - 41.8% of biomass -	These are "big hauls." They caught caught a lot of fish but could only sample a small fraction. This is common, but it's where the uncertainty lives.
 
 ## Artifact is where a length observation was imputed, where the total catch was reported 0 and will need to be dropped before analyses are run.
 fwrite(biomass_audit_1999.2014,
@@ -1922,8 +1917,6 @@ length(unique(final_production_data2017.2024$keys))
 range(final_production_data2017.2024$Condition_Factor)
 # [1] 0.8653652 0.9601620
 
-
-
 #--------------------------------------------------------------
 # Third, check the math and data quality
 #--------------------------------------------------------------
@@ -2122,11 +2115,12 @@ dat2017.2024 <- rbind(final_production_data2017.2024,
 
 # Determine what columns do not exist in the newer data
 !colnames(dat1999.2014) %in% colnames(dat2017.2024)
-#  [1]  TRUE  TRUE  TRUE FALSE  TRUE FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE  TRUE
-# [14]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
-# [27]  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
-# [40] FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE FALSE  TRUE  TRUE  TRUE FALSE  TRUE
-# [53] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+#  [1]  TRUE  TRUE  TRUE FALSE  TRUE FALSE FALSE FALSE FALSE  TRUE  TRUE
+# [12]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+# [23]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE
+# [45]  TRUE  TRUE FALSE  TRUE  TRUE  TRUE FALSE  TRUE FALSE FALSE FALSE
+# [56] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
 
 names(dat1999.2014)[c(1:3,5,10:30,44:46,48:50,52)]
 #  [1] "BRIDGE_LOG_ID"          "TRIP_ID"               
@@ -2158,14 +2152,16 @@ dat2017.2024 <- dat2017.2024 |>
 
 # Determine what columns do not exist in the older data
 !colnames(dat2017.2024) %in% colnames(dat1999.2014.short)
-#  [1] FALSE  TRUE  TRUE FALSE  TRUE  TRUE FALSE FALSE FALSE FALSE  TRUE  TRUE FALSE
-# [14]  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE
-# [27] FALSE FALSE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
-# [40] FALSE FALSE FALSE FALSE FALSE FALSE 
+#  [1] FALSE  TRUE  TRUE FALSE  TRUE  TRUE FALSE FALSE FALSE FALSE  TRUE
+# [12]  TRUE FALSE  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [23] FALSE FALSE FALSE  TRUE FALSE FALSE  TRUE FALSE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [45] FALSE
 
 names(dat2017.2024)[c(2:3,5:6,11:12,14:15,26,29)]
-# [1] "STRATUM"     "BLOCK"       "EVENT_TYPE"  "DAY_NIGHT"   "USABILITY"  
-# [6] "VOLUME_KM3"  "Nsamp"       "Note"        "UNIQUE_FISH" "geometry" 
+# [1] "STRATUM"     "BLOCK"       "EVENT_TYPE"  "DAY_NIGHT"  
+# [5] "USABILITY"   "VOLUME_KM3"  "Nsamp"       "Note"       
+# [9] "UNIQUE_FISH" "geometry"   
 
 # Remove unnecessary columns
 dat2017.2024.short <- dat2017.2024[-c(2:3,5,11:12,14:15,26)]
@@ -2179,14 +2175,14 @@ dat1999.2014.short <- dat1999.2014.short |>
   mutate(DAY_NIGHT = NA) 
 
 colnames(dat1999.2014.short) %in% colnames(dat2017.2024.short)
-#  [1] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
-# [15] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
-# [29] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE 
+#  [1] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+# [14] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+# [27] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
 
 colnames(dat2017.2024.short) %in% colnames(dat1999.2014.short)
-#  [1] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
-# [15] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
-# [29] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE 
+#  [1] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+# [14] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+# [27] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
 
 # Do final join
 all.dat <- rbind(dat1999.2014.short, dat2017.2024.short)
@@ -2247,7 +2243,7 @@ PreAbs2 <- all.dat |>
             BEGIN_RETRIEVAL_TIME, END_RETRIEVAL_TIME))
 
 dim(PreAbs2)
-# [1] 51055  34
+# [1] 44071 34
 
 # View(PreAbs2)
 
@@ -2384,10 +2380,10 @@ test.year.op <- area.transects.final.sf4 |>
 unique(is.na(test.year.op))
 
 dim(area.transects.final.sf4)
-# [1] 50784    38
+# [1] 43800 38
 
 dim(test.year.op)
-# [1] 50784    43
+# [1] 43800 43
 
 # Check difference between reported and averaged gear opening
 test.gear.opav <- tibble(Year = test.year.op$Year,
@@ -2524,22 +2520,27 @@ usdat <- fread(
 
 # Check for mismatch column names
 !colnames(usdat) %in% colnames(CanadianDat)
-#  [1]  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE  TRUE FALSE
-# [14]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE  TRUE  TRUE FALSE FALSE FALSE FALSE
-# [27]  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
-# [40] FALSE FALSE FALSE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE
-# [53] FALSE TRUE  FALSE FALSE FALSE FALSE
+#  [1]  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE
+# [12]  TRUE FALSE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE  TRUE  TRUE
+# [23] FALSE FALSE FALSE FALSE  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE  TRUE
+# [45]  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE FALSE
+# [56] FALSE FALSE FALSE
 
 # Find unmatched column names
 names(usdat)[c(1:4,9:12,14:19,21:22,27:28,43:47,54)]
-#  [1] "cruise"                   "ship"                     "haul"                    
-#  [4] "collection"               "itis_tsn"                 "scientific_name"         
-#  [7] "subsample_weight"         "remaining_weight"         "beginTransect"           
-# [10] "endTransect"              "transect.coords"          "haulback_time.utc"       
-# [13] "equilibrium_time.utc"     "Species_weight"           "subsample_count"         
-# [16] "specimen_number"          "haulback_time.pacific"    "equilibrium_time.pacific"
-# [19] "lat"                      "lon"                      "sunrise_pacific"         
-# [22] "sunset_pacific"           "cluster.grp"              "sweep.m3" 
+#  [1] "cruise"                   "ship"                    
+#  [3] "haul"                     "collection"              
+#  [5] "itis_tsn"                 "scientific_name"         
+#  [7] "subsample_weight"         "remaining_weight"        
+#  [9] "beginTransect"            "endTransect"             
+# [11] "transect.coords"          "haulback_time.utc"       
+# [13] "equilibrium_time.utc"     "Species_weight"          
+# [15] "subsample_count"          "specimen_number"         
+# [17] "haulback_time.pacific"    "equilibrium_time.pacific"
+# [19] "lat"                      "lon"                     
+# [21] "sunrise_pacific"          "sunset_pacific"          
+# [23] "cluster.grp"              "sweep.m3"                
 
 # Remove unnecessary columns. This is just to make 
 # filtering easier. You will need to still fix these when you
@@ -2582,10 +2583,10 @@ CanadianDat.new <- CanadianDat |>
 
 # Check Canadian data set column names
 !colnames(CanadianDat.new) %in% colnames(usdat.short)
-#  [1] FALSE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
-# [14]  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
-# [27] FALSE FALSE FALSE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE
-# [40] FALSE FALSE FALSE FALSE 
+#  [1] FALSE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [12] FALSE FALSE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [23] FALSE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE
 
 names(CanadianDat.new)[c(2,14,30,37:39)]
 # [1] "DISTANCE_TRAVELLED" "NBRE_Haul"          "DAY_NIGHT"         

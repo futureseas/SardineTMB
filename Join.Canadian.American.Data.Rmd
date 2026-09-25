@@ -32,7 +32,8 @@ rm(list=ls())
 gc()
 
 load.lib <- c("tidyverse", "data.table", "cowplot", "sf", 
-              "here", "sdmTMB", "sdmTMBextra"
+              "here", "sdmTMB", "sdmTMBextra", "rnaturalearth", "rnaturalearthhires", 
+              "mregions2" # Pulls official maritime EEZ records from MarineRegions.org
               ) 
 
 install.lib <- load.lib[!load.lib %in% installed.packages()]
@@ -40,12 +41,17 @@ install.lib <- load.lib[!load.lib %in% installed.packages()]
 for(lib in install.lib) install.packages(lib,dependencies=TRUE)
 sapply(load.lib,require,character=TRUE)
 
-sf_use_s2(TRUE)
+sf_use_s2(FALSE)
 
 dir <- here(getwd())
 
 source(here(dir, "functions.R"))
 
+```
+
+```{r}
+install.packages("diffobj")
+diffobj::diffFile("path/to/script1.R", "path/to/script2.R")
 ```
 
 # Load new sdm data
@@ -232,15 +238,9 @@ full.cad.dat.short.test2 <- full.cad.dat.short.test |>
 dim(full.cad.dat.short.test2)
 # [1] 0 5
 
-
 #----------------------------------------------------
 # Join Data Sets
 #----------------------------------------------------
-
-# To make Supplementary data table 1, all years were previously included. But here only 2008 and 2012 to 2019 data will be kept to match the U.S. Survey data.
-
-canadian.dat.short <- canadian.dat.short |>
-  filter(Year > 2007 & !Year %in% c(2009:2011) & Year < 2020)
 
 full.dat <- rbind(full.us.dat.short,
                   canadian.dat.short)
@@ -459,17 +459,6 @@ ggsave2(
 ```{r, load.land.shp}
 
 land.barrier <- read_sf(here(dir, "Data", "Shapefiles", "land.barrier.shp"))
-
-# Read full resolution - Continental land masses and ocean islands, except Antarctica.
-##land.barrier <- read_sf(here(dir, "Data", "Shapefiles", "gshhg-shp-2.3.7",
-##                             "GSHHS_shp", "f", "GSHHS_f_L1.shp")) |>
-### Project to same coordinate system
-##st_transform(crs = st_crs(TwoSeas.dat)) |>
-### Trim to area extent
-##  st_crop(st_bbox(TwoSeas.dat))
-
-# write_sf(land.barrier, here(dir, "Data", "Shapefiles", "land.barrier.shp"))
-
 plot(land.barrier)
 
 ```
@@ -566,7 +555,7 @@ all_levels2 <- sort(unique(c(TwoSeas.dat$YearSeas.nm, missing_seas$YearSeas.nm))
 
 # Define extra time steps to estimate
 est.missing.time2 <- unique(missing_seas$YearSeas.nm) |>
-  sort
+  sort()
 
 save(est.missing.time2, file = here(dir, "Data", "ExampleRun",
                                     "est.missing.time2.rda"))
@@ -580,7 +569,7 @@ save(est.missing.time2, file = here(dir, "Data", "ExampleRun",
 TwoSeas.dat.st <- TwoSeas.dat |>
   group_by(keys) |>
   mutate(FID = keys) |>
-  make_transect_sf(., crs = 4326) |>
+  make_transect_sf(crs = 4326) |>
   ungroup()
 
 # Explore the data
@@ -612,10 +601,10 @@ aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS8
 
 # Extract polygon centers
 TwoSeas.dat2 <- TwoSeas.dat.st |>
-  st_transform(., crs = aea_custom) |>
+  st_transform(crs = aea_custom) |>
   # Extract the centre of the transect (this is in km)
-  mutate(X = st_coordinates(st_centroid(.))[,1]/1000,
-         Y = st_coordinates(st_centroid(.))[,2]/1000) |>
+  mutate(X = st_coordinates(st_centroid(geometry))[,1]/1000,
+         Y = st_coordinates(st_centroid(geometry))[,2]/1000) |>
   st_drop_geometry() 
 
 # View(TwoSeas.dat)
@@ -631,7 +620,7 @@ range(TwoSeas.dat2$Y)
 
 ## Construct the Seasonal Mesh: 
 
-### Creat Barrier Mesh
+### Create Barrier Mesh
 
 ```{r, construct.barrier.mesh}
 
@@ -655,7 +644,7 @@ meshTwoSeas.dat_filtered <- make_mesh(TwoSeas.dat_filtered,
 ## If greater than >1,000–2,000 nodes, 
 ## you’re likely in trouble unless you have a lot of RAM.
 length(meshTwoSeas.dat_filtered$mesh$loc[,1])
-# [1] 593
+# [1] 594
 
 plot(meshTwoSeas.dat_filtered)
 points(TwoSeas.dat_filtered$X, TwoSeas.dat_filtered$Y, col = "red", pch = 19, 
@@ -668,7 +657,7 @@ barrier2 <- sdmTMBextra::add_barrier_mesh(meshTwoSeas.dat_filtered, land.barrier
 ## If greater than >1,000–2,000 nodes, 
 ## you’re likely in trouble unless you have a lot of RAM.
 length(barrier2$mesh$loc[,1])
-# [1] 593
+# [1] 594
 
 # Example plot code from ?add_barrier_mesh
 mesh_df_water2 <- barrier2$mesh_sf[barrier2$normal_triangles, ]
@@ -786,18 +775,58 @@ ggsave2(filename="S2.trend.check.by.country.w.integrated.Canadian.dat.wght.only.
 
 ## Plot trend by latitudinal bin
 
-```{r, year.lat.bin.trend}
+### First load EEZs
 
-#------------------------------------------------------
-# Load high resolution coastline
-#------------------------------------------------------
+```{r, EEZ.defs}
+#------------------------------------------------------------------------
+# Make coastline backdrop
+#------------------------------------------------------------------------
 
-eez.dir <- here(dir, "Data", "Shapefiles", "EEZ.Boundaries")
-eez <- read_sf(paste(eez.dir, "/USMaritimeLimitsNBoundaries.shp", sep = ""))
+PacificCoast <- ne_countries(scale = 10, returnclass = "sf") 
+PacificCoast.wgs84 <- st_crop(PacificCoast, xmin = -133, xmax = -110, 
+                               ymin = 25, ymax = 55)
+class(PacificCoast)
 
-#------------------------------------------------------
-# Create stock boundary limits
-#------------------------------------------------------
+# Define mapping boundaries
+pacific_bbox <- st_bbox(PacificCoast.wgs84)
+#     xmin ymin xmax ymax
+# [1] -133   27 -111   55
+
+#------------------------------------------------------------------------
+# For EEZ definitions 
+#------------------------------------------------------------------------
+# Note: Because you are cropping to study extent you need to put disclaimer!
+## Exclusive Economic Zone (EEZ) boundaries are filled by region and 
+## clipped to the study extent (27°N–55°N, 111°W–133°W) without explicit 
+## boundary lines for cartographic clarity. Displayed spatial extents are for 
+## analytic reference and do not imply official political endorsement or 
+## territorial adjudication.
+
+# For the U.S.
+# Download US EEZ polygons directly from MarineRegions.org
+us_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'United States' OR sovereign2 = 'United States'")
+us_eez <- us_eez_raw |>
+  # Crop the polygon to the Pacific region
+  st_crop(pacific_bbox) |>
+  # Clean up any geometry artifacts along the crop edge
+  st_make_valid()
+
+plot(st_geometry(us_eez))
+
+us_eez <- us_eez |>
+  filter(geoname == "United States Exclusive Economic Zone")
+
+plot(st_geometry(us_eez))
+eez.lat.limits <- st_bbox(us_eez)
+eez.lat.limits
+#       xmin       ymin       xmax       ymax 
+# -129.23483   30.54200 -117.09162   49.00226
+
+```
+
+### Create stock boundary limits
+
+```{r, historic.stock.boundaries}
 
 # Create point sf 
 limits <- data.frame(
@@ -806,27 +835,26 @@ limits <- data.frame(
   ) 
 
 limits.sf <- st_as_sf(limits, coords = c("X", "Y"), crs = 4326) |>
-  st_transform(., crs = aea_custom)
+  st_transform(crs = aea_custom)
 
-# Create northern stock boundary (Westernmost Point, CA)
+# Create northern stock boundary in km (Westernmost Point, CA)
 nstock <- st_coordinates(limits.sf)[1,2]/1000
 
-# Create southern stock boundary (Point Conception, CA)
+# Create southern stock boundary in km (Point Conception, CA)
 point.concept <- st_coordinates(limits.sf)[2,2]/1000
 
 #------------------------------------------------------
 # Create upper and lower spatial domain limits
 #------------------------------------------------------
 
-hlines <- eez |>
-  filter(REGION == "Pacific Coast") |>
-  st_transform(., crs = aea_custom) |>
+hlines <- us_eez |>
+  st_transform(crs = aea_custom) |>
   mutate(
-    # Create southern US EEZ boundary
-    ymin = st_bbox(.)["ymin"]/1000,
-    # Create northern US EEZ boundary
-    ymax = st_bbox(.)["ymax"]/1000
-    ) |>
+    # Create southern US EEZ boundary in km
+    ymin = st_bbox(geometry)["ymin"]/1000,
+    # Create northern US EEZ boundary in km
+    ymax = st_bbox(geometry)["ymax"]/1000
+  ) |>
     st_drop_geometry() |>
     select(ymin, ymax)
 
@@ -839,19 +867,18 @@ TwoSeas.dat_filtered <-
     mutate(latBin = 
              case_when(
                Y < unique(hlines$ymin) ~ "BajaCa",
-               Y >= unique(hlines$ymin) & 
-                 Y < point.concept ~ "SCaBaj",
-               Y >= point.concept & 
-                 Y < nstock ~ "Califo",
-               Y >= nstock &
-                 Y < unique(hlines$ymax) ~ "PNWUSA",
+               Y >= unique(hlines$ymin) & Y < point.concept ~ "SCaBaj",
+               Y >= point.concept & Y < nstock ~ "Califo",
+               Y >= nstock & Y < unique(hlines$ymax) ~ "PNWUSA",
                Y >= unique(hlines$ymax) ~ "Canada"
                )
-           ) 
+           )
 
-#------------------------------------------------------
-# Summarise the data
-#------------------------------------------------------
+```
+
+### Summarize the data
+
+```{r, latbin.summaries}
 
 TwoSeas.dat_filtered.latitude.test <- TwoSeas.dat_filtered |>
   filter(scientific_name == "Sardinops sagax") |>
@@ -859,12 +886,11 @@ TwoSeas.dat_filtered.latitude.test <- TwoSeas.dat_filtered |>
   summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") |>
   ungroup()
 
-
 TwoSeas.dat_filtered.latitude <- TwoSeas.dat_filtered |>
   filter(scientific_name == "Sardinops sagax") |>
   group_by(Year, Season, latBin) |>
   summarise(Haul.kg = sum(Scaled_Biomass_Contribution), .groups = "keep") |>
-  ungroup()
+  ungroup() 
 
 #------------------------------------------------------
 # Plot output
@@ -1096,6 +1122,7 @@ TwoSeas.2008_2019_prep.sf <- TwoSeas.2008_2019.sf |>
     ) |>
   ungroup() 
 
+
 # 2. Build Consolidated Summary Table
 TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf |>
   st_drop_geometry() |>
@@ -1144,7 +1171,8 @@ TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf |>
           # Collapse into string
           paste(ordered_bins, collapse = " & ")
           }
-      }
+      },
+    .by = c(Year, CountryLatBin)
     ) |>
   ungroup() |>
   select(

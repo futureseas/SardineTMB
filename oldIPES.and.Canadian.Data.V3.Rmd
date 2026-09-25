@@ -1,0 +1,3132 @@
+---
+title: "IPES.and.Canadian.Data"
+author: "Stephanie Hopkins"
+date: "2025-08-06"
+output: 
+html_document:
+  toc: TRUE
+---
+
+```{r setup, include=FALSE}
+
+rm(list=ls())
+gc()
+
+load.lib <- c("tidyverse", "data.table", "sf", "here", "readxl", "zoo",
+              "suncalc", "furrr", "cowplot", "geosphere", "units")
+
+install.lib <- load.lib[!load.lib %in% installed.packages()]
+
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+
+dir <- here(getwd())
+
+survey.path <- "IPES plus Historic Surveys Canada"
+
+# Since the data falls within two UTM zones and there is not an ideal projection to use, apply a custom equal area # albers projection
+aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
+
+source(here(dir,"functions.R"))
+
+```
+
+# Load files 1999 to 2014
+
+## First open an investigate the bridge log information
+
+This will give you an idea of the file structure and what can be used on and what needs to be calculated.
+
+```{r, 1999.2014.bridge.data, warning=FALSE, message=FALSE}
+
+# Load haul information
+bridge.dat1999.2014 <- read_excel(
+  here(dir, "Data", survey.path,
+       "SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx"),
+  sheet = "BRIDGE_LOG")
+
+colnames(bridge.dat1999.2014)
+#  [1] "BRIDGE_LOG_ID"               "TRIP_ID"                    
+#  [3] "EVENT_DATE"                  "Year"                       
+#  [5] "TOW_NUMBER"                  "CHIEF_SCIENTIST"            
+#  [7] "EVENT_TYPE"                  "EVENT_SUB_TYPE"             
+#  [9] "CTD_SPECS_ID"                "TRAWL_SPECS_ID"             
+# [11] "GEAR_CODE"                   "BEGIN_DEPLOYMENT_TIME"      
+# [13] "END_DEPLOYMENT_TIME"         "BEGIN_RETRIEVAL_TIME"       
+# [15] "END_RETRIEVAL_TIME"          "TOW_DURATION"               
+# [17] "GEAR_DEPLOY_REASON_COMMENTS" "START_LATITUDE"             
+# [19] "START_LONGITUDE"             "END_LATITUDE"               
+# [21] "END_LONGITUDE"               "AVG_BOTTOM_DEPTH"           
+# [23] "AVG_TOW_DEPTH"               "TARGET_DEPTH_CEILING"       
+# [25] "AVG_CAPTURE_DEPTH"           "DISTANCE_TRAVELLED"         
+# [27] "BEARING"                     "PFMA_SUB_AREA_NUMBER"       
+# [29] "AREA_CODE"                   "SUB_AREA_CODE"              
+# [31] "AREA_COMMENTS"               "WATER_TEMPERATURE"          
+# [33] "WIND_DIRECTION"              "WIND_SPEED"                 
+# [35] "SWELL_HEIGHT"                "SEA_SURFACE_DESCRIPTION"    
+# [37] "TIDE_HEIGHT"                 "CLOUD_COVER"                
+# [39] "MOUTH_OPENING_HEIGHT"        "MOUTH_OPENING_WIDTH"        
+# [41] "WARP_LENGTH"                 "SWEPT_VOLUME"               
+# [43] "SPEED"                       "USABILITY_CODE"             
+# [45] "SOUNDER_COMMENTS"            "COMMENTS"    
+
+sort(unique(bridge.dat1999.2014$Year))
+#  [1] 1999 2000 2001 2002 2003 2004 2005 2006 2008 2009 2010 2011
+# [13] 2012 2013 2014
+
+range(na.omit(bridge.dat1999.2014$START_LATITUDE))
+# [1] 46.973 54.804
+range(na.omit(bridge.dat1999.2014$START_LONGITUDE))
+# [1] -134.149 -123.567
+range(na.omit(bridge.dat1999.2014$END_LATITUDE)) 
+# [1] 48.24633 54.95000
+range(na.omit(bridge.dat1999.2014$END_LONGITUDE))
+# [1] -134.206 -123.573
+
+# Check for missing entries required to estimate density
+unique(is.na(bridge.dat1999.2014))
+
+```
+
+It looks there are many gaps in what can be used to estimate sweep volume and gear configuration. You need to join the data and see how viable it is.
+
+## Second open an investigate the sardine catch data
+
+This will give you an idea of the file structure and what can be used on and what needs to be calculated. Most of the observations are expected to be blank or represent absences.
+
+```{r, 1999.2014.specimen.data}
+
+# Load sample information
+Catch.dat1999.2014  <- read_excel(
+  here(dir,"Data", survey.path,
+       "SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx"),
+  sheet = "SARDINE_CATCH")
+
+colnames(Catch.dat1999.2014)
+#  [1] "TRIP_ID"                  "TRIP_NAME"               
+#  [3] "TRIP_YEAR"                "EVENT_DATE"              
+#  [5] "EVENT_TYPE"               "TOW_NUMBER"              
+#  [7] "DESCRIPTION"              "START_LATITUDE"          
+#  [9] "START_LONGITUDE"          "END_LATITUDE"            
+# [11] "END_LONGITUDE"            "AREA_CODE"               
+# [13] "SUB_AREA_CODE"            "PFMA_SUB_AREA_NUMBER"    
+# [15] "CATCH_ID"                 "BRIDGE_LOG_ID"           
+# [17] "SPECIES_CODE"             "EST_CATCH_METHOD_CODE"   
+# [19] "CATCH_COUNT"              "CATCH_WEIGHT"            
+# [21] "CATCH_WEIGHT_PRECISION"   "MATURITY_CONVENTION_CODE"
+# [23] "COMMENTS"        
+
+```
+
+## Join common IDs where sardine are present for 2008 - 2014 data
+
+Note here you will need to also rename some columns to match later data sets and to be able to join with the CPS ATM Survey from the U.S.
+
+```{r, 1999.2014.id.join}
+
+## Note that pre-2001, there is a discrepancy between TRIP IDs and you have to match
+## on everything besides that column 
+comb.dat1999.2014.test <- 
+  full_join(bridge.dat1999.2014, Catch.dat1999.2014, 
+            join_by(BRIDGE_LOG_ID,TRIP_ID, EVENT_DATE, TOW_NUMBER,
+                    START_LATITUDE, START_LONGITUDE, END_LATITUDE,
+                    END_LONGITUDE)) %>%
+  mutate(keys = paste(BRIDGE_LOG_ID, EVENT_DATE, TRIP_ID, 
+                      TOW_NUMBER, START_LATITUDE, START_LONGITUDE, 
+                      END_LATITUDE, END_LONGITUDE, sep = "_"),
+         # This is a column in the new IPES data set
+         UNIQUE_EVENT = paste("Pre-IPES", Year, TRIP_ID, 
+                              TOW_NUMBER, sep = "-")
+         )
+
+length(unique(comb.dat1999.2014.test$UNIQUE_EVENT))
+# [1] 1255
+
+comb.dat1999.2014 <- 
+  full_join(bridge.dat1999.2014, Catch.dat1999.2014, 
+            join_by(BRIDGE_LOG_ID, TRIP_ID, EVENT_DATE, TOW_NUMBER,
+                    START_LATITUDE, START_LONGITUDE, END_LATITUDE,
+                    END_LONGITUDE)) %>%
+  mutate(keys = paste(BRIDGE_LOG_ID, TRIP_ID, EVENT_DATE,
+                      TOW_NUMBER, START_LATITUDE, START_LONGITUDE, 
+                      END_LATITUDE, END_LONGITUDE, sep = "_"),
+         # This is a column in the new IPES data set
+         UNIQUE_EVENT = paste("Pre-IPES", Year, TRIP_ID, 
+                              TOW_NUMBER, sep = "-")
+         )
+
+length(unique(comb.dat1999.2014$UNIQUE_EVENT))
+# [1] 1255
+
+# View(comb.dat1999.2014)
+
+```
+
+## Clean data structure and rename columns to match methods
+
+```{r, 1999.2014.re-structure.join}
+
+# Rename columns to match function 
+comb.dat1999.2014.st <- comb.dat1999.2014  %>%  
+  mutate(start_latitude = as.numeric(START_LATITUDE),
+         start_longitude = as.numeric(START_LONGITUDE),
+         stop_latitude = as.numeric(END_LATITUDE),
+         stop_longitude = as.numeric(END_LONGITUDE), 
+         FID = row_number(),
+         Month = as.numeric(format(EVENT_DATE, "%m"))) %>%
+  select(-c(START_LATITUDE, START_LONGITUDE, END_LATITUDE, END_LONGITUDE))
+
+unique(is.na(comb.dat1999.2014.st$FID))
+# [1] FALSE
+
+# Note data must not have instances where starting and ending lat and lon values are the same or an empty line string is returned (empty line strings will be dealt with later)
+comb.dat1999.2014.sf <- make_transect_sf(comb.dat1999.2014.st, 
+                                         crs = 4326)
+
+# Define Season
+sort(unique(comb.dat1999.2014.sf$Month))
+# [1] 1 2 3 4 5 6 7 8 9
+
+comb.dat1999.2014.sf <- comb.dat1999.2014.sf %>%
+  mutate(Season = "Summer")
+
+dim(comb.dat1999.2014.sf)
+# 1255  67
+
+```
+
+## Calculate sweep area and investigate missing entries
+
+Here you may need to mark or remove data where we cannot estimate distance or location.
+
+```{r, 1999.2014.sweep.area.config}
+
+comb.dat1999.2014.sf <- comb.dat1999.2014.sf %>%
+  group_by(keys, UNIQUE_EVENT) %>%
+  mutate(area.op.m2 = MOUTH_OPENING_WIDTH*MOUTH_OPENING_HEIGHT) %>%
+  ungroup()
+
+sort(unique(comb.dat1999.2014.sf$area.op.m2))
+#  [1] 224.0 240.0 280.6 288.0 300.0 310.0 312.0 320.0 327.5 330.0 336.0
+# [12] 340.0 341.0 350.0 352.0 360.0 363.0 372.0 374.0 377.0 384.0 385.0
+# [23] 390.0 392.0 396.0 403.0 406.0 408.0 416.0 420.0 429.0 432.0 434.0
+# [34] 435.0 442.0 448.0 450.0 455.0 456.0 462.0 465.0 476.0 504.0 522.0
+# [45] 532.0 544.0 561.0 578.0 648.0 800.0
+
+unique(is.na(comb.dat1999.2014.sf$area.op.m2))
+# [1] FALSE  TRUE
+
+# See if all start and stop locations are valid
+unique(is.na(comb.dat1999.2014.sf$start_latitude))
+# [1] FALSE TRUE
+unique(is.na(comb.dat1999.2014.sf$stop_latitude))
+# [1] FALSE  TRUE
+unique(is.na(comb.dat1999.2014.sf$start_longitude))
+# [1] FALSE  TRUE
+unique(is.na(comb.dat1999.2014.sf$stop_longitude))
+# [1] FALSE  TRUE
+
+# See if there is a distance reported
+unique(is.na(comb.dat1999.2014.sf$DISTANCE_TRAVELLED))
+# [1] FALSE  TRUE
+
+# Check where the stop information originates
+no.stops <- comb.dat1999.2014.sf %>%
+  filter(is.na(stop_longitude) | is.na(stop_latitude))
+
+sort(unique(no.stops$Year))
+# [1] 1999 2000 2001 2011
+
+# Filter out missing data values
+comb.dat1999.2014.sf.clean <- comb.dat1999.2014.sf %>%
+  filter(!is.na(stop_longitude) | !is.na(stop_latitude))
+
+# See if this corrects the gear configurations
+unique(is.na(comb.dat1999.2014.sf.clean$area.op.m2))
+# [1] FALSE  TRUE
+
+```
+
+Not having 2011 values is okay because there is no corresponding U.S. Survey data for 2011. However, for the final data set, there are still observations without gear opening information so an average value will be needed. There is also no error reported and trip is marked as valid for when the gear opening was calculated to be 1270 m.
+
+## Fill in missing data points on cleaned data
+
+This will help in creating like columns in the future.
+
+```{r, 1999.2014.fill.catch.values}
+
+unique(comb.dat1999.2014.sf.clean$SPECIES_CODE)
+# [1] NA    "100"
+
+# Prior to 2001 there was no species code
+comb.dat1999.2014.sf.clean$DESCRIPTION
+
+# For cases where Sardine are present
+present.dat1999.2014 <- comb.dat1999.2014.sf.clean %>%
+  filter(SPECIES_CODE == 100 | DESCRIPTION == "PACIFIC SARDINE") %>%
+  # For instances where catch weight is unknown, assume absence and force to 0
+  mutate(CATCH_WEIGHT = ifelse(is.na(CATCH_WEIGHT), 0, CATCH_WEIGHT),
+         sciname = "Sardinops sagax")
+
+# For cases where Sardine are not present         
+absent.dat1999.2014  <- comb.dat1999.2014.sf.clean %>% 
+  filter(is.na(SPECIES_CODE)) %>% 
+  # Force catch weight to 0
+  mutate(CATCH_WEIGHT = 0,
+         sciname = "Other")
+
+comb.dat1999.2014.sf2 <- rbind(present.dat1999.2014, absent.dat1999.2014)
+
+unique(comb.dat1999.2014.sf2$sciname)
+# [1] "Sardinops sagax" "Other"
+
+```
+
+## Get quick summary of data for methods paper (1999 - 2014)
+
+```{r, quick.summary}
+
+summary(comb.dat1999.2014.sf2)
+
+sort(unique(comb.dat1999.2014.sf2$Year))
+# [1] 2001 2002 2003 2004 2005 2006 2008 2009 2010 2011 2012 2013 2014
+
+sort(unique(comb.dat1999.2014.sf2$Month))
+# [1] 7 8
+
+# Find geographic boundary extent of surveys
+range(comb.dat1999.2014.sf2$start_latitude)
+# [1] 48.248  54.804
+range(comb.dat1999.2014.sf2$stop_latitude)
+# [1] 48.24633  54.95000
+range(comb.dat1999.2014.sf2$start_longitude, na.rm = TRUE)
+# [1] -134.149  -123.567
+range(comb.dat1999.2014.sf2$stop_longitude, na.rm = TRUE)
+# [1] -134.206  -123.573
+
+# Check range of speed travelled for gear selectivity assumption.
+range(comb.dat1999.2014.sf2$SPEED, na.rm = TRUE)
+#[1] 4.0744  14.8160
+
+# Check mean speed travelled for gear selectivity assumption test. 
+# Ideally they should be around 4 or 5 knots
+mean(comb.dat1999.2014.sf2$SPEED, na.rm = TRUE)
+# [1] 9.092452
+
+# Find trips where the average speed was greater than 6 knots
+save.high.speeds <- comb.dat1999.2014.sf2 %>%
+  # It appears that the the speed is in km/hr. To match with the
+  # documentation, create a speed column in knots.
+  mutate(knot_SPEED = SPEED/1.852)
+
+# For write up find range of reported speeds
+range(save.high.speeds$knot_SPEED, na.rm = TRUE)
+# [1] 2.2  8.0
+
+# For write up find mean of reported speeds
+mean(save.high.speeds$knot_SPEED, na.rm = TRUE)
+# [1] 4.909531
+
+save.high.speeds <- save.high.speeds %>%
+  filter(knot_SPEED > 6) %>%
+  st_drop_geometry() %>%
+  distinct() %>% 
+  select(-c(EVENT_TYPE.y, DESCRIPTION, AREA_CODE.y, SUB_AREA_CODE.y,
+            PFMA_SUB_AREA_NUMBER.y, COMMENTS.y, FID))
+
+# Save output for high speeds to send to Jennifer Boldt 
+fwrite(save.high.speeds, here(dir, "Data", 
+                      "IPES plus Historic Surveys Canada", 
+                      "Speeds.to.check.csv"),
+                 sep = ";")
+
+# Check range of warp length (this should be in m)
+range(comb.dat1999.2014.sf2$WARP_LENGTH, na.rm = TRUE)
+# [1] 100 450
+
+# Check range (nautical miles)
+range(comb.dat1999.2014.sf2$DISTANCE_TRAVELLED, na.rm = TRUE)
+# [1] 0.19 3.40
+
+# Check mean (nautical miles)
+mean(comb.dat1999.2014.sf2$DISTANCE_TRAVELLED, na.rm = TRUE)
+# [1] 1.868804
+
+# Check range (converting nautical miles to km)
+range((comb.dat1999.2014.sf2$DISTANCE_TRAVELLED*1.852), 
+      na.rm = TRUE)
+# [1] 0.35188  6.29680
+
+# Check mean (converting nautical miles to km)
+mean((comb.dat1999.2014.sf2$DISTANCE_TRAVELLED*1.852), 
+     na.rm = TRUE)
+# [1]3.461025
+
+# Check where distance was not measured
+comb.dat1999.2014.sf2 %>%
+  filter(is.na(DISTANCE_TRAVELLED)) %>%
+  select(Year) %>%
+  st_drop_geometry() %>%
+  distinct() %>% 
+  select(Year) %>% 
+  tibble() %>%
+  pull() %>%
+  sort()
+# [1] 2001 2002 2003 2004 2005 2009 2010 2011 2012
+
+# For gear selectivity assumption also check warp to target ratio
+# Ideally this should be about 3:1 or 5:1.
+test <- comb.dat1999.2014.sf2 %>%
+  mutate(warp2target_ratio = WARP_LENGTH/30) %>%
+  select(warp2target_ratio) %>%
+  st_drop_geometry()
+
+# This is a really high ratio extent and means they would 
+range(test$warp2target_ratio, na.rm = TRUE)
+# [1]  3.333333 15.000000
+
+# Check which years were higher than 6:1
+save.high.ratios <- comb.dat1999.2014.sf2 %>%
+  mutate(warp2target_ratio = WARP_LENGTH/30) %>%
+  filter(warp2target_ratio > 6) %>%
+  distinct() %>% 
+  select(-c(EVENT_TYPE.y, DESCRIPTION, AREA_CODE.y, SUB_AREA_CODE.y,
+            PFMA_SUB_AREA_NUMBER.y, COMMENTS.y, FID))
+
+
+# Save output and forward to Jennifer Boldt
+fwrite(save.high.ratios, here(dir, "Data", 
+                      "IPES plus Historic Surveys Canada", 
+                      "Warp.ratio.check.csv"),
+                 sep = ";")
+
+# Check tow duration
+range(comb.dat1999.2014.sf2$TOW_DURATION, na.rm = TRUE)
+# [1]  0 150
+
+# Check if area code is equal to strata (there should be between 6 
+# and 8 strata)
+unique(comb.dat1999.2014.sf2$AREA_CODE.x)
+# [1] "B" "C" "A" NA  "D"
+
+# See how you can group area codes
+test2 <- comb.dat1999.2014.sf2 %>%
+      filter(Year == 2008) %>%
+      mutate(strata_id = 
+               stringr::str_split_i(PFMA_SUB_AREA_NUMBER.x, "-", 1),
+             transect_id = 
+               stringr::str_split_i(PFMA_SUB_AREA_NUMBER.x, "-", 2)
+  )
+
+unique(test2$strata_id)
+# [1] "123" "121" "124" "125" "126" "127" "23" 
+
+#---------------------------------------------#
+# Note that "23 is near shore, but            #
+# follows "123" designation in the older data #
+# See: Schweigert, McFarlane, and Hodes, 2010 #
+#---------------------------------------------#
+
+# Reassign strata "23" to "123"
+test2 <- test2 %>%
+  mutate(strata_id = 
+           case_match(strata_id, 
+                      "23" ~ "123", # Exactly 23 becomes 123
+                      .default = strata_id  # All other values 
+                                            # remain the same
+                      )
+         )
+
+# Check bottom depth and strata observation counts 
+test3 <- test2 %>%
+  group_by(Year, TRIP_ID, strata_id) %>%
+  mutate(n_transects = n_distinct(transect_id),
+         n_transects2 = n_distinct(AREA_CODE.x),
+         n_transects3 = n_distinct(SUB_AREA_CODE.x),
+         transect_id2 = paste0(transect_id, AREA_CODE.x, SUB_AREA_CODE.x)) %>%
+  mutate(n_transects4 = n_distinct(transect_id2),
+         n_hauls = n_distinct(TOW_NUMBER)) %>%
+  ungroup()
+
+# Check if range bottom depth matches reanalysis 
+range(test3$AVG_BOTTOM_DEPTH, na.rm = TRUE)
+# [1] 39 1950
+
+# Check if average bottom depth matches reanalysis 
+mean(test3$AVG_BOTTOM_DEPTH, na.rm = TRUE)
+# [1] 360.7183
+
+# Check if range capture depth matches reanalysis 
+range(as.numeric(test3$AVG_CAPTURE_DEPTH), na.rm = TRUE)
+# [1] 1.4 65.0
+
+# Check if average capture depth matches reanalysis 
+mean(as.numeric(test3$AVG_CAPTURE_DEPTH), na.rm = TRUE)
+# [1] 7.533333
+
+#---------------------------------------------#
+# Note that the Schweigert, McFarlane, and    #
+# Hodes, 2010 report depths only up to 500 m  #
+#---------------------------------------------#
+
+# Check if number of transects and sampling match reanalysis
+range(test3$n_transects)
+# [1] 1 8
+range(test3$n_transects2)
+# [1] 1 3
+range(test3$n_transects3)
+# [1] 2 4
+range(test3$n_transects4)
+# [1] 2 11
+
+# Double check strata id output
+unique(test3$strata_id)
+# [1] "123" "121" "124" "125" "126" "127"
+
+# Check if number of hauls per transect match reanalysis
+range(test3$n_hauls)
+# [1] 3 18
+
+# Try and see why they do not
+# View(test3)
+
+# Check outliers for gear mouth area
+gear_dim_outlier <- comb.dat1999.2014.sf2 %>%
+  filter(area.op.m2 > 700) %>%
+  distinct() %>% 
+  select(-c(EVENT_TYPE.y, DESCRIPTION, AREA_CODE.y, SUB_AREA_CODE.y,
+            PFMA_SUB_AREA_NUMBER.y, COMMENTS.y, FID))
+
+# Save output for high speeds to send to Jennifer Boldt 
+fwrite(gear_dim_outlier, here(dir, "Data", 
+                      "IPES plus Historic Surveys Canada", 
+                      "gear.opening.to.check.csv"),
+                 sep = ";")
+
+# Test warp to target depth ratio with mean gear opening height
+comb.dat1999.2014.sf2 %>%
+  filter(Year == 2013 & area.op.m2 < 700) %>%
+  mutate(mean_gear_height = mean(MOUTH_OPENING_HEIGHT)) %>%
+  st_drop_geometry() %>%
+  select(mean_gear_height) %>%
+  distinct()
+
+reval <- comb.dat1999.2014.sf2 %>%
+  filter(MOUTH_OPENING_HEIGHT >= 40) %>%
+  mutate(MOUTH_OPENING_HEIGHT = 13.45614)
+
+okay.val <- comb.dat1999.2014.sf2 %>%
+  filter(MOUTH_OPENING_HEIGHT < 40)
+
+testreval <- rbind(reval, okay.val) %>%
+  mutate(area.op.m2 = MOUTH_OPENING_HEIGHT*MOUTH_OPENING_WIDTH)
+
+# Check range of area now following the outlier adjustment
+range(testreval$area.op.m2, na.rm = TRUE)
+# [1] 224 800
+
+# Check meabn of area now following the outlier adjustment
+mean(testreval$area.op.m2, na.rm = TRUE)
+# [1] 401.4298
+
+```
+
+The naming and grouping conventions changed somewhere between between 2009 and 2010. The number of observations also appears to differ. Three papers investigate the issue with the survey core sampling strategy, but it remains ambiguous. It will be best to note the change but you may not be able to accurately describe it and will need to separate out fishing effort and catchability from the density calculations (i.e., move them to the right of the equation).
+
+## Reformat data types where needed
+
+```{r, reformat.data.types}
+
+comb.dat1999.2014.sf2 <- comb.dat1999.2014.sf2 %>%
+  mutate(CATCH_ID = as.character(CATCH_ID),
+         SPECIES_CODE = as.character(SPECIES_CODE),
+         )
+
+unique(comb.dat1999.2014.sf2$sciname)
+# [1] "Sardinops sagax" "Other"
+
+```
+
+## Investigate specimen data
+
+```{r, load.specimen.data}
+
+# Load specimen data
+Catch.dat1999.2014.specimen <- read_excel(
+  here(dir,"Data", survey.path,
+       "SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx"),
+  sheet = "SardineSpecimen", 
+  col_types = c("text", "text", "text", "text", "text", "numeric",
+                "numeric")
+)
+
+# Join specimen data
+final.comb.dat1999.2014 <- left_join(comb.dat1999.2014.sf2,
+                                     Catch.dat1999.2014.specimen)
+
+# Remove redundant and unused columns
+final.comb.dat1999.2014.short <- final.comb.dat1999.2014 %>% 
+  select(
+    -c(EST_CATCH_METHOD_CODE, COMMENTS.y, MATURITY_CONVENTION_CODE, 
+       CATCH_WEIGHT_PRECISION, DESCRIPTION, EVENT_TYPE.y,
+       COMMENTS.x, SOUNDER_COMMENTS, USABILITY_CODE, CLOUD_COVER,
+       TIDE_HEIGHT, SEA_SURFACE_DESCRIPTION, SWELL_HEIGHT, 
+       WIND_SPEED, WIND_DIRECTION, WATER_TEMPERATURE, AREA_COMMENTS,
+       CHIEF_SCIENTIST, EVENT_TYPE.x, EVENT_SUB_TYPE, CTD_SPECS_ID,
+       GEAR_CODE, GEAR_DEPLOY_REASON_COMMENTS, BEARING,
+       TRAWL_SPECS_ID))
+
+```
+
+## Convert to Standard Length
+
+```{r, Standard.length.conversion1999.2014}
+
+# Add standard_length value based on Flostrand et al., 2014 
+#  Appendix page 51
+## FL = 1.01*SL + 0.787; SL = (FL - 0.787) / 1.01
+final.comb.dat1999.2014.stnd <- final.comb.dat1999.2014.short %>%
+  mutate(
+    standard_length = 
+      case_when(
+        sciname == "Sardinops sagax" ~
+          # Convert to cm and then convert from Fork Length to
+          # Standard Length
+          ((FORKLENGTH_MM/10) - 0.787)/1.01,
+        sciname == "Other" ~ NA
+        ),
+    # Convert to kg weight per subsample
+    weight = WEIGHT_G/1000
+    ) %>%
+  # Remove redundant column
+  #select(-c(FORKLENGTH_MM, WEIGHT_G)) %>%
+  # Force values to nearest mm (1 decimal place)
+  mutate(standard_length = round(standard_length, digits = 1))
+
+# View(final.comb.dat1999.2014.stnd)
+
+unique(is.na(final.comb.dat1999.2014.stnd))
+
+#---------------------------------------------#
+# Verify there are no na lengths              #
+#---------------------------------------------#
+
+test.na.length <- final.comb.dat1999.2014.stnd %>%
+  filter(sciname == "Sardinops sagax")
+
+unique(is.na(test.na.length$standard_length))
+# [1] FALSE  TRUE
+
+```
+
+## Check sample counts
+
+```{r, Check.sample.counts}
+
+# For each haul, find number of samples
+final.comb.dat1999.2014 <- final.comb.dat1999.2014.stnd %>%
+  # For each unique trip, sum the total sardine catch obs
+    group_by(keys, UNIQUE_EVENT, sciname) %>%
+      mutate(NBRE_Haul = 
+               case_when(
+                 sciname == "Sardinops sagax" ~ n(),
+                 sciname == "Other" ~ 0
+                 )
+             ) %>%
+  ungroup() %>%
+  distinct()
+
+dim(final.comb.dat1999.2014)
+# [1] 42155  52
+
+historic.sardine.obs.test <- final.comb.dat1999.2014 %>% 
+  filter(Year > 2007 & !Year %in% c(2009:2011))
+
+length(unique(historic.sardine.obs.test$keys))
+# [1] 278
+
+# Subset the date to include hauls only where sardines are present
+sardine.obs <- final.comb.dat1999.2014 %>% 
+  filter(Year > 2007 & !Year %in% c(2009:2011)) %>%
+   filter(sciname == "Sardinops sagax")
+
+sort(unique(sardine.obs$Year))
+# [1] 2008 2012
+
+length(unique(sardine.obs$keys))
+# [1] 86
+
+length(unique(sardine.obs$keys))/length(unique(historic.sardine.obs.test$keys))*100
+# [1] 30.93525
+
+# Find the number of hauls where there are not weight obs.
+sardine.wght.is.na <- sardine.obs %>%
+  filter(is.na(weight) & !is.na(standard_length))
+
+length(unique(sardine.wght.is.na$keys))[1]
+# [1] 51
+
+# Calculate the percent of missing weight data relative to all catches
+round((dim(sardine.wght.is.na)[1]/dim(sardine.obs)[1])*100, 
+      digits = 2)
+# [1] 58.61
+
+# Find the number of hauls where there are not length obs.
+sardine.len.is.na <- sardine.obs %>%
+  filter(is.na(standard_length))
+
+length(unique(sardine.len.is.na$keys))
+# [1] 20
+
+# Find the number of hauls where there are not weight & length obs.
+sardine.wght.len.is.na <- sardine.obs %>%
+  filter(is.na(weight) & is.na(standard_length))
+
+length(unique(sardine.wght.len.is.na$keys))
+# [1] 20
+
+# Calculate the percent of missing length data
+round(length(unique(sardine.wght.len.is.na$keys))[1]/length(unique(sardine.obs$keys))*100, 
+      digits = 2)
+# [1] 23.26
+
+# Check if the same 0.25% is missing; if so, you can just
+# use the sardine.wght.len.is.na set
+identical(sardine.wght.len.is.na, sardine.len.is.na)
+# [1] TRUE
+
+```
+
+## Define datetime stamp
+
+Investigate what can be used to compare temporal distance. 
+
+```{r, pseudo.equilibrium.calc}
+
+# Check what columns are missing
+unique(is.na(final.comb.dat1999.2014.stnd$BEGIN_DEPLOYMENT_TIME))
+# [1] FALSE  TRUE
+
+unique(is.na(final.comb.dat1999.2014.stnd$END_DEPLOYMENT_TIME))
+# [1] FALSE
+
+unique(is.na(final.comb.dat1999.2014.stnd$BEGIN_RETRIEVAL_TIME))
+# [1] FALSE  TRUE
+
+unique(is.na(final.comb.dat1999.2014.stnd$END_RETRIEVAL_TIME))
+# [1] FALSE  TRUE
+
+```
+
+Given the only complete case is END_DEPLOYMENT_TIME, this will need to be used though mathematically this is not representative of the equilibrium time or optimum. 
+
+## Treat remaining data based on nearest distance
+
+The objective here is to find the closest corresponding haul in time and space. Your target data frame will have the missing entries you are extrapolating (i.e., the missing observations).
+
+### Define target and source data
+
+```{r, define.target.and.source.data.frames}
+
+colnames(sardine.len.is.na)
+#  [1] "BRIDGE_LOG_ID"          "TRIP_ID"               
+#  [3] "EVENT_DATE"             "Year"                  
+#  [5] "TOW_NUMBER"             "BEGIN_DEPLOYMENT_TIME" 
+#  [7] "END_DEPLOYMENT_TIME"    "BEGIN_RETRIEVAL_TIME"  
+#  [9] "END_RETRIEVAL_TIME"     "TOW_DURATION"          
+# [11] "AVG_BOTTOM_DEPTH"       "AVG_TOW_DEPTH"         
+# [13] "TARGET_DEPTH_CEILING"   "AVG_CAPTURE_DEPTH"     
+# [15] "DISTANCE_TRAVELLED"     "PFMA_SUB_AREA_NUMBER.x"
+# [17] "AREA_CODE.x"            "SUB_AREA_CODE.x"       
+# [19] "MOUTH_OPENING_HEIGHT"   "MOUTH_OPENING_WIDTH"   
+# [21] "WARP_LENGTH"            "SWEPT_VOLUME"          
+# [23] "SPEED"                  "TRIP_NAME"             
+# [25] "TRIP_YEAR"              "AREA_CODE.y"           
+# [27] "SUB_AREA_CODE.y"        "PFMA_SUB_AREA_NUMBER.y"
+# [29] "CATCH_ID"               "SPECIES_CODE"          
+# [31] "CATCH_COUNT"            "CATCH_WEIGHT"          
+# [33] "keys"                   "UNIQUE_EVENT"          
+# [35] "start_latitude"         "start_longitude"       
+# [37] "stop_latitude"          "stop_longitude"        
+# [39] "FID"                    "Month"                 
+# [41] "geometry"               "Season"                
+# [43] "area.op.m2"             "sciname"               
+# [45] "SPECIMEN_ID"            "FISH_ID"               
+# [47] "FISH_LAB_ID"            "FORKLENGTH_MM"         
+# [49] "WEIGHT_G"               "standard_length"       
+# [51] "weight"                 "NBRE_Haul"             
+
+unique(is.na(sardine.len.is.na))
+
+#------------------------------------
+# Create transect data for data to fill
+#------------------------------------
+Hauls2Fill.clean_sf1999_2014 <- 
+  make_transect_sf(
+  sardine.len.is.na, crs = 4326) %>%
+  mutate(DatSource = "2Fill") %>%
+  distinct() %>%
+  group_by(keys, DatSource, geometry) %>%
+  # Create a single group id and assign it to all rows in that group
+  mutate(index = cur_group_id()) %>%
+  ungroup() %>%
+  st_transform(., crs = aea_custom) %>%
+  # Remove columns to fill
+  select(-c(standard_length, weight, SPECIMEN_ID, FISH_ID, FISH_LAB_ID, 
+            FORKLENGTH_MM, WEIGHT_G, CATCH_COUNT, NBRE_Haul)
+  )
+
+unique(is.na(Hauls2Fill.clean_sf1999_2014))
+
+#------------------------------------
+# For known data (pre-processed data 
+# where specimen samples are present)
+#------------------------------------
+
+# Create unique grouping key - place holder to join on later
+keys.to.match.temp <- sardine.obs %>%
+  filter(!is.na(weight)) %>%
+  make_transect_sf(., crs = 4326) %>%
+  distinct() %>%
+  group_by(keys, geometry) %>%
+  # Create a single group id and assign it to all rows in that group
+  mutate(index = cur_group_id()) %>%
+  ungroup()
+
+# For creation of the distance matrices
+knownDat_sf <- keys.to.match.temp %>%
+  mutate(DatSource = "source") %>%
+  distinct() %>%
+  group_by(keys, geometry, DatSource) %>%
+  # Create a single group id and assign it to all rows in that group
+  mutate(index = cur_group_id()) %>%
+  ungroup() %>% 
+  st_transform(., crs = aea_custom) %>%
+  select(index, geometry, END_DEPLOYMENT_TIME, 
+         DatSource) 
+
+unique(is.na(knownDat_sf))
+
+```
+
+## Create a distance matrices
+
+```{r, create.distance.matrices}
+
+#------------------------------------
+# For spatial distances
+#------------------------------------
+# Extract projected coordinates (in meters)
+Hauls2Fill.clean_xy <- st_geometry(Hauls2Fill.clean_sf1999_2014)
+knownDat_xy <- st_geometry(knownDat_sf)
+
+## Spatial distance matrix (Euclidean in meters)
+dist_matrix <- st_distance(Hauls2Fill.clean_xy, knownDat_xy)
+dim(dist_matrix)
+# [1] 20 3547
+
+# Remove the units (in metres)
+dist_matrix.no.units <- drop_units(dist_matrix)
+
+#------------------------------------
+# For temporal distances
+#------------------------------------
+## Time distance matrix (in mins)
+temp_matrix <- compute_time_diff_matrix(
+  Hauls2Fill.clean_sf1999_2014$END_DEPLOYMENT_TIME,
+  knownDat_sf$END_DEPLOYMENT_TIME,
+  units = "secs")
+
+dim(temp_matrix)
+# [1] 20 3547
+
+```
+
+## Combine matrixes and weight
+
+```{r, combined.spatial.temporal.distance}
+
+#----------------------------------------------------------
+# 1. Combine with Weights (Adjust these to change 
+# 'importance')
+#----------------------------------------------------------
+
+# Set spatial weight to 1
+spatial_weight <- 1
+
+# Find the relationship to time
+
+## Remember these are already in km/hr. Find the average speed 
+## travelled between 2008 and 2014
+meanSpeed1999_2014 <- mean(comb.dat1999.2014.sf.clean$SPEED, na.rm = TRUE)
+meanSpeed1999_2014
+# 9.092452
+
+## Create a temporal weight measure for seconds 
+## Note that we need to convert the ship speed (km/hr)
+## to m/s or some other unit of time. To convert to 
+## meter per second, you would use then divide 1000 by 3600.
+time_weight <- meanSpeed1999_2014*(1000/3600)
+
+combined_score <- 
+  (dist_matrix.no.units * spatial_weight) + 
+  (temp_matrix * time_weight)
+
+# Find the index of the minimum score for each target row
+nearest_index <- apply(combined_score, 1, which.min)
+
+# Create a row-column indexer for matrix extraction
+row_idx <- seq_len(nrow(combined_score))
+matrix_indexer <- cbind(row_idx, nearest_index)
+
+#------------------------------------------------------
+# 2. Extract Values and Add Metadata
+#------------------------------------------------------
+
+# The 'Match Quality' columns
+Hauls2Fill.clean_sf1999_2014$match_combined_score <- 
+  combined_score[matrix_indexer]
+Hauls2Fill.clean_sf1999_2014$match_dist_meters <-
+  dist_matrix.no.units[matrix_indexer]
+Hauls2Fill.clean_sf1999_2014$match_diff_seconds <- 
+  temp_matrix[matrix_indexer]
+
+# Metadata from the matched 'Known' record
+Hauls2Fill.clean_sf1999_2014$nearest_key <- 
+  knownDat_sf$index[nearest_index]
+Hauls2Fill.clean_sf1999_2014$nearest_tim <-
+  knownDat_sf$END_DEPLOYMENT_TIME[nearest_index]
+
+# Convert geometry of the match for record keeping
+matched_geom <- 
+  st_geometry(knownDat_sf)[nearest_index] %>% 
+  st_transform(4326)
+
+Hauls2Fill.clean_sf1999_2014$nearest_haul_loc <- 
+  as.character(matched_geom)
+
+#---------------------------------------------------------
+# 3. Final Summary Column (Human Readable)
+#---------------------------------------------------------
+Hauls2Fill.clean_sf1999_2014 <- Hauls2Fill.clean_sf1999_2014 %>%
+  mutate(match_summary = 
+           paste0("Dist: ", round(match_dist_meters/1000, 2), 
+                  "km | Time: ", round(match_diff_seconds/60, 1),
+                  "min"))
+
+# Remove geometry if you need a clean dataframe
+final_df1999_2014 <- st_drop_geometry(Hauls2Fill.clean_sf1999_2014)
+
+# View(final_df1999_2014)
+
+```
+
+## Join lenth comps based on closest values
+
+```{r, assign.closes.lenComps}
+
+# 1. Prepare the Donor Pool (Individual Fish)
+# This pulls the actual measured fish records 
+# from your source data
+donor_pool1999_2014 <- keys.to.match.temp %>%
+  st_drop_geometry() %>%
+  select(index, 
+         standard_length,
+         FORKLENGTH_MM,
+         WEIGHT_G,
+         CATCH_COUNT,
+         NBRE_Haul,
+         SPECIMEN_ID,
+         FISH_ID, 
+         FISH_LAB_ID, 
+         weight_donor = weight)
+
+# 2. Join and Scale (The "Expansion" Step)
+# We take final_df (one row per haul) and join it 
+# to donor_pool (many rows per haul)
+final_expanded_specimens1999_2014 <- final_df1999_2014 %>%
+  # Match the 'nearest_key' found by your distance
+  # matrix to the donor index
+  left_join(donor_pool1999_2014, by = c("nearest_key" = "index"),
+            relationship = "many-to-many")
+
+# View(final_expanded_specimens1999_2014)
+
+```
+
+## Save summary of corresponding values
+
+```{r, summary}
+
+Hauls2Fill.clean_sf.f.summary1999_2014 <- 
+  final_expanded_specimens1999_2014 %>%
+  select(keys, start_latitude, start_longitude, stop_latitude, 
+         stop_longitude, END_DEPLOYMENT_TIME, index, 
+         match_combined_score, match_dist_meters, match_diff_seconds, 
+         nearest_key, nearest_tim, nearest_haul_loc, match_summary) %>%
+  distinct() %>%
+  st_drop_geometry()
+
+# View(Hauls2Fill.clean_sf.f.summary1999_2014)
+
+fwrite(
+  Hauls2Fill.clean_sf.f.summary1999_2014, 
+  here(dir, "Data", survey.path,
+       "Canadian.surveys.estimated.specimen.weight-lenComps_1999-2014.csv"), 
+  sep = ",")
+
+```
+
+# Join all data sets
+
+```{r, final.merge}
+
+Canadian.specimen.dat.clean1999_2014 <- final.comb.dat1999.2014 %>%
+  st_drop_geometry() %>%
+  filter(!is.na(standard_length) & sciname == "Sardinops sagax")
+
+# Check for mismatched columns
+!colnames(final_expanded_specimens1999_2014) %in%
+  colnames(Canadian.specimen.dat.clean1999_2014)
+#  [1] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [12] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [23] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE  TRUE
+# [45]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE
+# [56] FALSE FALSE FALSE FALSE  TRUE
+
+# Extract names of missing columns
+names(final_expanded_specimens1999_2014)[c(43:51,60)]
+#  [1] "DatSource"            "index"                "match_combined_score"
+#  [4] "match_dist_meters"    "match_diff_seconds"   "nearest_key"         
+#  [7] "nearest_tim"          "nearest_haul_loc"     "match_summary"       
+# [10] "weight_donor"        
+
+# Rename to match Canadian.specimen.dat.clean1999_2014
+## Note here we keep the original CATCH_WEIGHT
+final_expanded_specimens.clean1999_2014 <-
+  final_expanded_specimens1999_2014 %>% 
+  select(-c(DatSource, index, match_combined_score, 
+            match_dist_meters, match_diff_seconds,
+            nearest_key, nearest_tim, nearest_haul_loc,
+            match_summary)) %>%
+  rename(weight = weight_donor)
+
+# Check for mismatched columns
+!colnames(Canadian.specimen.dat.clean1999_2014) %in%
+  colnames(final_expanded_specimens.clean1999_2014)
+#  [1] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [12] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [23] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [45] FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+
+# Join back to clean data
+allDat1999_2014 <- rbind(final_expanded_specimens.clean1999_2014, 
+                         Canadian.specimen.dat.clean1999_2014)
+
+# Verify that these entries correspond to other species
+test.na.length <- allDat1999_2014 %>%
+  filter(is.na(standard_length) & 
+           sciname == "Sardinops sagax")
+
+dim(test.na.length)
+# [1] 0 51
+
+dim(allDat1999_2014)
+# [1] 42760    51
+
+allDat1999_2014 <- allDat1999_2014 %>%
+  mutate(date = date(END_DEPLOYMENT_TIME)) %>%
+  mutate(Year = year(date),
+         Month = month(date))
+
+fwrite(
+  allDat1999_2014,
+  here(dir, "Data", survey.path,
+       "Candian.surveys.with.integrated.specimen.data_1999-2014.csv"), 
+       sep = ",")
+
+```
+
+## Store absence observations
+
+```{r, absences.1999.2014}
+
+# Use the b value as normal, then to adjust the scalar, find the 
+final.comb.dat1999.2014.absences <- final.comb.dat1999.2014 %>%
+  filter(sciname != "Sardinops sagax") %>%
+  mutate(date = date(END_DEPLOYMENT_TIME)) %>%
+  mutate(Year = year(date),
+         Month = month(date),
+         weight = 0,
+         CATCH_COUNT = 0,
+         CATCH_WEIGHT = 0,
+         len.bin = NA,
+         W_theory = 0,
+         Condition_Factor = NA,
+         W_best_estimate = 0,
+         Bio_Weight_kg = 0,
+         Subsample_Total_W = 0,
+         Haul_Total_Catch_W = 0,
+         Bin_Subsample_W = 0,
+         Bin_Prop = NA,
+         Bin_Haul_Biomass = 0,
+         Indiv_W_Scaled = 0,
+         Scaled_Biomass_Contribution = 0,
+         Expansion_Factor = NA,
+         age = NA,
+         mean.length.age = NA
+         ) %>%
+  st_drop_geometry()
+
+```
+
+### Define length bin definitions for Sardine only
+
+Because ageing is uncertain, propose length bins where the first 100 mm are grouped (considered age 0), and where every 2.25 cm is added.
+
+```{r, length.bin.defs.1999.2014}
+
+len.bins1999.2014 <- allDat1999_2014
+
+head(len.bins1999.2014)
+
+range(len.bins1999.2014$standard_length)
+# [1] 1.3 33.9
+
+#-------------------------------------------------------------
+# Check lowest intervals
+#-------------------------------------------------------------
+
+len_less150_1999.2014 <- len.bins1999.2014 %>%
+  filter(standard_length < 15) %>%
+  mutate(len.bin = "less150")
+
+len_150to200_1999.2014 <- len.bins1999.2014 %>%
+  filter(standard_length >= 15 & standard_length < 20) %>%
+  mutate(len.bin = "150to200")
+
+len_200plus_1999.2014 <- len.bins1999.2014 %>%
+  filter(standard_length >= 20) %>%
+  mutate(len.bin = "200+")
+
+#-------------------------------------------------------------
+# Join data sets 
+#-------------------------------------------------------------
+
+len.bins2_1999.2014 <- rbind(len_less150_1999.2014,
+                             len_150to200_1999.2014,
+                             len_200plus_1999.2014)
+
+```
+
+# Check length bins per haul
+
+```{r, number.of.length.bins.per.haul}
+
+# Simplify the data
+compare.bin.comps <- tibble(len.bins2_1999.2014$UNIQUE_EVENT, 
+                            len.bins2_1999.2014$len.bin, 
+                            len.bins2_1999.2014$weight, 
+                            len.bins2_1999.2014$CATCH_WEIGHT)
+
+names(compare.bin.comps) <- c("UNIQUE_EVENT", "len.bin", "weight",
+                              "CATCH_WEIGHT")
+
+# Check if more than 1 length group exists
+result <- compare.bin.comps %>%
+  group_by(UNIQUE_EVENT) %>%
+  filter(n_distinct(len.bin) != 1) %>%
+  ungroup()
+# View(result)
+
+# How many hauls overall
+length(unique(compare.bin.comps$UNIQUE_EVENT))
+# [1] 283
+
+# How many hauls had more than 1 length bin
+length(unique(result$UNIQUE_EVENT))
+# [1] 159
+
+result <- result %>%
+  group_by(UNIQUE_EVENT) %>%
+  mutate(obs = n(),
+         obs.real = sum(!is.na(weight))
+  ) %>%
+  ungroup()
+
+# How many hauls at least some weight obs.
+partial.vals <- result %>%
+  filter(obs.real > 0)
+length(unique(partial.vals$UNIQUE_EVENT))
+# [1] 133
+
+# How many hauls have no weight values
+no.vals <- result %>%
+  filter(obs.real == 0)
+length(unique(no.vals$UNIQUE_EVENT))
+# [1] 26
+
+```
+
+## Test conditional weighting based on the observed length bins
+
+```{r, Hybrid.reweight.with.real.obs.and.theoretical.1999.2014}
+
+#---------------------------------------------------------------
+# First re-weight the data using the recorded observations where 
+# available, and the theoretical where not available.
+#---------------------------------------------------------------
+
+# 1. Define Haul Keys
+haul_keys <- c("keys", "UNIQUE_EVENT")
+
+final_hybrid_reconstruction1999.2014 <- 
+  len.bins2_1999.2014 %>%
+  # --- Step A: Calculate Theoretical Baseline ---
+  mutate(W_theory = 7.52e-06 * standard_length^3.23) %>%
+  
+  group_by(across(all_of(haul_keys))) %>%
+  mutate(
+    # How much do our measured fish deviate from the 
+    # 'textbook' weight?
+    ## CF = (Sum of Real Weights) / (Sum of Theoretical Weights 
+    ## for those same fish)
+    Condition_Factor = sum(weight, na.rm = TRUE) / 
+                       sum(if_else(!is.na(weight), W_theory, 0), 
+                           na.rm = TRUE),
+    
+    # If no weights were taken at all, default the Factor to 1.0
+    Condition_Factor = if_else(is.nan(Condition_Factor) | 
+                                 Condition_Factor == 0, 
+                               1.0, Condition_Factor),
+    
+    # Create a 'Best Estimate' weight for EVERY fish
+    # Use real weight if we have it; use (Theory * CF) if we don't
+    W_best_estimate = if_else(!is.na(weight), weight, 
+                              W_theory * Condition_Factor),
+    
+    # Total Weight of the Subsample (now complete for all 
+    # measured lengths)
+    Subsample_Total_W = sum(W_best_estimate),
+    Haul_Total_Catch_W = first(CATCH_WEIGHT)
+  ) %>%
+  
+  # --- Step B: Partition the Catch ---
+  group_by(across(all_of(c(haul_keys, "len.bin")))) %>%
+  mutate(
+    Bin_Subsample_W = sum(W_best_estimate),
+    Bin_Prop = Bin_Subsample_W / first(Subsample_Total_W),
+    
+    # Partition the based on this hybrid proportion
+    Bin_Haul_Biomass = Bin_Prop * first(Haul_Total_Catch_W),
+    
+    # Final 'Scaled' Individual Weight 
+    # (Sum of these = CATCH_WEIGHT)
+    Indiv_W_Scaled = Bin_Haul_Biomass / n()
+  ) %>%
+  ungroup()
+
+# View(final_hybrid_reconstruction1999.2014)
+
+#---------------------------------------------------------------
+# Second, define the expansion factor and summarise the output
+#---------------------------------------------------------------
+
+final_production_data1999.2014 <- 
+  final_hybrid_reconstruction1999.2014 %>%
+  mutate(
+    # 1. BIOLOGICAL WEIGHT: This is the fish's actual 
+    # size (e.g., ~0.08 kg)
+    ## Use this for Length-Weight plots and Condition analysis
+    Bio_Weight_kg = W_best_estimate,
+    
+    # 2. EXPANSION WEIGHT: This is the scaled contribution (~80 kg)
+    ## Use this ONLY for summing up Total Biomass or 
+    ## Stacked Bar Charts
+    Scaled_Biomass_Contribution = Indiv_W_Scaled,
+    
+    # 3. THE LINK: The 'Numerical Expansion Factor'
+    ## This tells you one measured fish represents 'X' fish in 
+    ## the ocean
+    Expansion_Factor = 
+      Scaled_Biomass_Contribution / Bio_Weight_kg
+  )
+
+# View(final_production_data1999.2014)
+
+#--------------------------------------------------------------
+# Third, check the math and data quality
+#--------------------------------------------------------------
+
+# The sum of scaled weights should exactly match
+# the recorded total species weight
+sum(final_production_data1999.2014$Scaled_Biomass_Contribution) -
+  sum(unique(final_production_data1999.2014$CATCH_WEIGHT))
+# [1] 15919.06
+
+#-----------------------------
+
+# The scaled biomass is not capturing the observed
+# weights well. Check if the issue lies in the fish weight 
+# data wrangling step
+error_report_1999.2014 <- 
+  final_production_data1999.2014 %>%
+  group_by(across(all_of(haul_keys))) %>%
+  summarise(
+    Expected = first(CATCH_WEIGHT),
+    Actual = sum(Indiv_W_Scaled),
+    Diff = Expected - Actual,
+    .groups = "keep"
+  ) %>%
+  filter(abs(Diff) > 0.001)
+
+dim(error_report_1999.2014)
+# [1] 0 5
+
+#-----------------------------
+
+# It seems the math is correct and the issue
+# is likely in the sample size relative to the
+# Haul size. Check if the subsample size (being far smaller) is 
+# not representative of the haul
+summary(final_production_data1999.2014$Expansion_Factor)
+#  Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 0.000   2.296  11.403  30.081  33.703 774.209 
+
+# What the Summary tells us:
+
+## That Max of 774.209 is still a "yellow light" in the data. But this is also the highest leverage point; one measured unit represents nearly 774 units of biomass. Its large but manageable uncertainty for a survey of this scale.
+
+## Min (0.00): Some "subsamples" were actually heavier than the recorded species weight (likely a data entry error or a "dirty" weight including debris), effectively scaling the fish down.
+
+## Median (11.403): This is still very healthy. It means for half your data, you measured about 1/11th (approx. 9%) of the catch. 
+
+## The 3rd Quartile (33.703): At the 75th percentile, your expansion factor is 33.703. This means that for 75% of your data, you sampled at least 1/33rd of the total catch (3.03%).
+
+## Mean (30.081): Average expansion is roughly 30x, influenced by the tail of larger hauls.
+
+#-----------------------------
+# Check if expansion factors larger than 500 are common
+biomass_audit_1999.2014 <- 
+  final_production_data1999.2014 %>%
+  st_drop_geometry() %>%
+  mutate(Expansion_Bin = 
+           cut(Expansion_Factor,
+               breaks = c(0, 10, 100, 1000, Inf),
+               labels = c("01-10 (High)", 
+                          "10-100 (Med)", 
+                          "100-1000 (Low)", 
+                          ">1000 (Extreme)")) %>%
+  # This line catches the 0s and NAs and renames them
+  fct_na_value_to_level(level = "Artifact")) %>%
+  group_by(Expansion_Bin) %>%
+  summarise(
+    Record_Count = n(),
+    Total_Biomass_Represented = 
+      sum(Scaled_Biomass_Contribution)
+  ) %>%
+  mutate(Percent_of_Total_Biomass = 
+           Total_Biomass_Represented / 
+           sum(Total_Biomass_Represented) * 100)
+
+print(biomass_audit_1999.2014)
+# A tibble: 4 × 4
+#   Expansion_Bin  Record_Count Total_Biomass_Represented Percent_of_Total_Biomass
+#   <fct>                 <int>                     <dbl>                    <dbl>
+# 1 1-10 (High)           22260                    10953.                     4.87
+# 2 10-100 (Med)          21663                   120293.                    53.5
+# 3 100-1000 (Low)         3338                    93633.                    41.6 
+# 4 Artefact                472                        0                      0   
+
+# What this table tells us:
+
+## High (1-10) - 4.87% of biomass -	These are your "anchor" hauls where you measured almost everything. Very high precision.
+
+# Med (10-100) - 53.5% of biomass -	This is your engine room. Measuring 1%–10% of a haul is the industry standard for robust sampling. The fact that the majority of your biomass sits here is excellent.
+
+# Low (100-1000) - 41.6% of biomass -	These are your "big hauls." You caught a lot of fish but could only sample a small fraction. This is common, but it's where your uncertainty lives.
+
+## Artefact is where a length observation was imputed, where the total catch was reported 0 and will need to be dropped before analyses are run.
+fwrite(biomass_audit_1999.2014,
+       here(dir, "Data", "IPES plus Historic Surveys Canada",
+            "Canadian.Survey.Biomass.audit.1999-2014.csv"), 
+       sep = ",")
+
+top_influence_hauls_1999.2014 <- 
+  final_production_data1999.2014 %>%
+  filter(Expansion_Factor > 100) %>%
+  group_by(keys, UNIQUE_EVENT) %>%
+  summarise(
+    Total_Weight_kg = first(CATCH_WEIGHT),
+    Records_Measured = n(),
+    Expansion = first(CATCH_WEIGHT) / first(Subsample_Total_W), 
+    .groups = "keep"
+  ) %>%
+  arrange(desc(Total_Weight_kg))
+
+# View(top_influence_hauls_1999.2014)
+
+fwrite(top_influence_hauls_1999.2014,
+       here(dir, "Data", "IPES plus Historic Surveys Canada",
+            "Canadian.Survey.top_influence_hauls.1999.2014.csv"), 
+       sep = ",")
+
+#-----------------------------
+# Check that for every haul, the sum of the 
+# Scaled_Biomass_Contribution is equal to the CATCH_WEIGHT
+test.total.bios.1999.2014 <- 
+  final_production_data1999.2014 %>%
+  group_by(keys, UNIQUE_EVENT, CATCH_WEIGHT) %>%
+  summarise(TotScaleBio = sum(Scaled_Biomass_Contribution), .groups = "drop") %>%
+  mutate(Is_Match = near(CATCH_WEIGHT, TotScaleBio, tol = 0.001)) %>%
+  ungroup()
+  
+# Now check how many DON'T match
+sum(!test.total.bios.1999.2014$Is_Match)
+# [1] 0
+
+#---------------------------------------------------------------
+# Fourth, create plot showing the the biological weight per length
+#---------------------------------------------------------------
+
+# Plot individual estimated weights per haul by length
+## Note this includes the pseudo values!
+Hybrid.reweighting.w.correction1999.2014 <-
+ ggplot(final_production_data1999.2014, 
+         aes(x = standard_length, 
+             y = Bio_Weight_kg,
+             color = UNIQUE_EVENT)) + # Move color inside aes()
+  geom_point(alpha = 0.5) + # Alpha helps see overlapping points
+  theme_minimal() +
+  theme(legend.position = "none") + # Hides the massive legend
+  labs(title = "Validation of Conditional Weighting Based on Observed Length Bins: Sardinops sagax",
+       x = "Standard Length (cm)",
+       y = "Hybrid Estimation Individual Weight (kg)")
+
+Hybrid.reweighting.w.correction1999.2014
+
+ggsave2(
+   filename=
+     "Hybrid.reweighting.w.correction.plot.1999.2014.Canada.jpeg",
+   plot=Hybrid.reweighting.w.correction1999.2014, device="jpeg", 
+   path=here(dir, "Final.Figures", "Test.Length.Comps.Methods"),
+   dpi=1200, width = 29, height=21, unit="cm", limitsize = FALSE)
+
+#---------------------------------------------------------------
+# Fifth, create plot showing the the expansion weight per length
+# bin
+#---------------------------------------------------------------
+
+# Plot individual estimated weights per haul by length
+scaled.reweighting.w.correction1999.2014 <-
+  ggplot(final_production_data1999.2014, 
+         aes(x = UNIQUE_EVENT,
+             y = Scaled_Biomass_Contribution,
+             fill = as.factor(len.bin)
+             )
+         ) +
+  geom_bar(stat = "identity", 
+           position = "stack", 
+           linewidth = 0.01) +
+  scale_fill_viridis_d(option = "plasma", 
+                       name = "Length Bin (cm)") +
+  theme_minimal() +
+  labs(
+    title = "Proportional Biomass Distribution by Hauls",
+    subtitle = "Total Haul Weights Partitioned by Length Bins",
+    x = NULL,
+    y = "Expansion Biomass Est. (kg)") +
+  theme(axis.text.x = element_blank())
+
+scaled.reweighting.w.correction1999.2014
+
+ggsave2(
+  filename="expansion_biomass_per.haul.plot.1999.2014.Canada.jpeg",
+  plot=scaled.reweighting.w.correction1999.2014, device="jpeg", 
+  path=here(dir, "Final.Figures",
+            "Test.Length.Comps.Methods"),
+  dpi=1200, width = 29, height=21,  
+  unit="cm", limitsize = FALSE)
+
+```
+
+# Load files 2017 to 2024
+
+## First open an investigate the bridge log information
+
+This will give you an idea of the file structure and what can be used on and what needs to be calculated.
+
+```{r, 2017.2024.bridge.data, warning=FALSE, message=FALSE}
+
+# Load haul information
+bridge.dat2017.2024 <- read_excel(
+  here(dir, "Data", survey.path,
+       "IPES_SardineData_ToStephanieHopkins_V2.xlsx"),
+  sheet = "Bridge")
+
+colnames(bridge.dat2017.2024)
+#  [1] "Year"                  "STRATUM"              
+#  [3] "BLOCK"                 "UNIQUE_EVENT"         
+#  [5] "EVENT_TYPE"            "DAY_NIGHT"            
+#  [7] "BEGIN_DEPLOYMENT_TIME" "END_DEPLOYMENT_TIME"  
+#  [9] "BEGIN_RETRIEVAL_TIME"  "END_RETRIEVAL_TIME"   
+# [11] "START_LATITUDE"        "START_LONGITUDE"      
+# [13] "END_LATITUDE"          "END_LONGITUDE"        
+# [15] "USABILITY"             "MOUTH_KM2"            
+# [17] "VOLUME_KM3"                        
+
+sort(unique(bridge.dat2017.2024$Year))
+# [1] 2017 2018 2019 2021 2022 2023 2024
+
+range(na.omit(bridge.dat2017.2024$START_LATITUDE))
+# [1] 48.27510 51.24907
+range(na.omit(bridge.dat2017.2024$START_LONGITUDE))
+# [1] -129.3689 -124.8529
+range(na.omit(bridge.dat2017.2024$END_LATITUDE)) 
+# [1] 48.27830 51.26655
+range(na.omit(bridge.dat2017.2024$END_LONGITUDE))
+# [1] -129.3459 -124.8204
+
+# Check for missing entries required to estimate density
+unique(is.na(bridge.dat2017.2024))
+
+length(unique(bridge.dat2017.2024$UNIQUE_EVENT))
+# [1] 703
+
+# For paper on historic catches
+test.lim.2019 <- bridge.dat2017.2024 %>% filter(Year < 2020)
+length(unique(test.lim.2019$UNIQUE_EVENT))
+# [1] 334
+
+```
+
+## Second open an investigate the sardine catch data
+
+This will give you an idea of the file structure and what can be used on and what needs to be calculated. Most of the observations are expected to be blank or represent absences.
+
+```{r, 2017.2024.specimen.data}
+
+# Load sample information
+Catch.dat2017.2024 <- read_excel(
+  here(dir, "Data", survey.path,
+       "IPES_SardineData_ToStephanieHopkins_V2.xlsx"),
+  sheet = "SardineCatch")
+
+colnames(Catch.dat2017.2024)
+# [1] "Year"                       "UNIQUE_EVENT"              
+# [3] "USABILITY"                  "DAY_NIGHT"                 
+# [5] "PACIFIC_SARDINE_CatchWt_kg" "PACIFIC_SARDINE_CatchCount"
+# [7] "NOTE"
+
+names(Catch.dat2017.2024) <- c("Year", "UNIQUE_EVENT", "USABILITY",
+                               "DAY_NIGHT", "CATCH_WEIGHT", "Nsamp",
+                               "Note")
+
+length(unique(Catch.dat2017.2024$UNIQUE_EVENT))
+# [1] 5
+
+# For paper on historic catches
+test.lim.2019.positiveCatch <- Catch.dat2017.2024 %>% filter(Year < 2020)
+length(unique(test.lim.2019.positiveCatch$UNIQUE_EVENT))
+# [1] 3
+
+```
+
+## Join common IDs for 2017 - 2024 data
+
+Note here you will need to also rename some columns to match later data sets and to be able to join with the CPS ATM Survey from the U.S.
+
+```{r, 2017.2024.id.join}
+
+comb.dat2017.2024 <-
+  left_join(bridge.dat2017.2024, Catch.dat2017.2024, 
+            join_by(Year, UNIQUE_EVENT, USABILITY, DAY_NIGHT)
+            ) %>%
+  mutate(keys = paste(UNIQUE_EVENT, Year, STRATUM, BLOCK,
+                      BEGIN_DEPLOYMENT_TIME, END_DEPLOYMENT_TIME,
+                      BEGIN_RETRIEVAL_TIME, END_RETRIEVAL_TIME, 
+                      START_LATITUDE, START_LONGITUDE, END_LATITUDE,
+                      END_LONGITUDE, 
+                      sep = "_"
+                      )
+         )
+
+head(comb.dat2017.2024)
+
+# Create species id
+comb.dat2017.2024 <- comb.dat2017.2024 %>%
+  mutate(sciname = 
+           case_when(
+             is.na(CATCH_WEIGHT) ~ "Other",
+             !is.na(CATCH_WEIGHT) ~ "Sardinops sagax"
+             )
+         )
+
+# Replace NA with 0
+comb.dat2017.2024$CATCH_WEIGHT[is.na(comb.dat2017.2024$CATCH_WEIGHT)] = 0
+# Replace NA with 0
+comb.dat2017.2024$Nsamp[is.na(comb.dat2017.2024$Nsamp)] = 0
+
+```
+
+## Clean data structure and rename columns to match methods
+
+Note all NA values are hauls where no sardines were caught. These can be forced to zero.
+
+```{r, 2017.2024.sweep.area.config}
+
+# Rename columns to match function 
+comb.dat2017.2024.st <- comb.dat2017.2024 %>%  
+  mutate(start_latitude = as.numeric(START_LATITUDE),
+         start_longitude = as.numeric(START_LONGITUDE),
+         stop_latitude = as.numeric(END_LATITUDE),
+         stop_longitude = as.numeric(END_LONGITUDE), 
+         FID = row_number(),
+         Month = as.numeric(format(END_DEPLOYMENT_TIME, "%m")),
+         # Convert to square meters
+         area.op.m2 = MOUTH_KM2*1e06
+         ) %>%
+  select(-c(START_LATITUDE, START_LONGITUDE, END_LATITUDE, 
+            END_LONGITUDE, MOUTH_KM2))
+
+# Note data must not have instances where starting and ending lat 
+# and lon values are the same or an empty line string is returned 
+# (empty line strings will be dealt with later)
+comb.dat2017.2024.sf <- make_transect_sf(comb.dat2017.2024.st, 
+                                         crs = 4326)
+
+# Define Season
+sort(unique(comb.dat2017.2024.sf$Month))
+# [1] 6 7 8
+
+comb.dat2017.2024.sf <- comb.dat2017.2024.sf %>%
+  mutate(Season = "Summer")
+
+dim(comb.dat2017.2024.sf)
+# [1] 703  26
+
+# View(comb.dat2017.2024.sf)
+
+```
+
+## Investigate specimen data
+
+```{r, specimen.data}
+
+# Load specimen data
+Catch.dat2017.2024.specimen <- read_excel(
+  here(dir,"Data", survey.path,
+       "IPES_SardineData_ToStephanieHopkins_V2.xlsx"),
+  sheet = "Specimen")
+
+
+# Join specimen data
+final.comb.dat2017.2024 <- left_join(comb.dat2017.2024.sf,
+                                     Catch.dat2017.2024.specimen)
+
+dim(final.comb.dat2017.2024)
+# [1] 706  36
+
+colnames(final.comb.dat2017.2024)
+
+# Rename weight to match earlier data set
+final.comb.dat2017.2024 <- final.comb.dat2017.2024 %>%
+  rename(weight = WEIGHT)
+
+unique(final.comb.dat2017.2024$Year)
+# [1] 2017 2018 2019 2021 2022 2023 2024
+
+```
+
+## Convert to Standard Length
+
+```{r, Standard.length.conversion2017.2024}
+
+# Add standard_length value based on Flostrand et al., 2014 
+# Appendix page 51; FL = 1.01*SL + 0.787; SL = (FL - 0.787) / 1.01
+final.comb.dat2017.2024.stnd <- final.comb.dat2017.2024 %>%
+  mutate(
+    standard_length = 
+      case_when(
+        sciname == "Sardinops sagax" &
+          LENGTH_TYPE == "Fork Length" ~
+          # Convert to cm and then convert from Fork Length to
+          # Standard Length
+          ((LENGTH/10) - 0.787)/1.01,
+        sciname == "Sardinops sagax" &
+          LENGTH_TYPE == "Standard Length" ~ LENGTH/10,
+        sciname == "Other" ~ NA
+        ),
+    # Convert to kg
+    weight = 
+      case_when(
+        is.na(WEIGHT_TYPE) ~ 0,
+        !is.na(WEIGHT_TYPE) ~ weight/1000
+      )
+  ) %>%
+  # Force values to nearest mm (1 decimal place)
+  mutate(standard_length = round(standard_length, digits = 1)) %>%
+  # Remove redundant columns
+  select(-c(SPECIES_CODE, SPECIES, FISH_NUM, LENGTH, LENGTH_UNIT,
+            LENGTH_TYPE, WEIGHT_TYPE, WEIGHT_UNIT)
+         )
+
+dim(final.comb.dat2017.2024.stnd)
+# [1] 706  29
+
+```
+
+## Check sample counts
+
+```{r, Check.sample.counts}
+
+# For each haul, find number of samples
+final.comb.dat2017.2024 <- final.comb.dat2017.2024.stnd %>%
+  # For each unique trip, sum the total sardine catch obs
+    group_by(keys, UNIQUE_EVENT, sciname) %>%
+      mutate(NBRE_Haul = 
+               case_when(sciname == "Sardinops sagax" ~ n(),
+                         sciname == "Other" ~ 0
+                         )
+      ) %>%
+  ungroup() %>%
+  distinct()
+
+dim(final.comb.dat2017.2024)
+# [1] 706  30
+
+# Find the number of hauls with sardine
+sardine.obs2017.2024 <- final.comb.dat2017.2024 %>%
+  filter(sciname == "Sardinops sagax")
+
+# Find the number of hauls where there are not weight obs.
+sardine.wght.is.na2017.2024 <- final.comb.dat2017.2024 %>%
+  filter(is.na(CATCH_WEIGHT) & sciname == "Sardinops sagax")
+
+# Find the number of hauls where there are not weight & length obs.
+sardine.len.is.na2017.2024 <- final.comb.dat2017.2024 %>%
+  filter(is.na(standard_length) & sciname == "Sardinops sagax")
+
+# Find the number of hauls where there are not weight & length obs.
+sardine.wght.len.is.na2017.2024 <- final.comb.dat2017.2024 %>%
+  filter(is.na(CATCH_WEIGHT) & is.na(standard_length) & 
+           sciname == "Sardinops sagax")
+
+# Calculate the percent of missing weight data
+round((dim(sardine.wght.is.na2017.2024)[1]/
+         dim(sardine.obs2017.2024)[1])*100, digits = 2)
+# [1] 0
+
+# Calculate the percent of missing length data
+round((dim(sardine.len.is.na2017.2024)[1]/
+         dim(sardine.obs2017.2024)[1])*100, digits = 2)
+# [1] 0
+
+# Calculate the percent of missing weight and length data
+round((dim(sardine.wght.len.is.na2017.2024)[1]/
+         dim(sardine.obs2017.2024)[1])*100, digits = 2)
+# [1] 0
+
+#-----------------------------------------------
+# For 2017-2019, how many hauls?
+#-----------------------------------------------
+
+testyears <- final.comb.dat2017.2024 %>% 
+  filter(Year %in% c(2017:2019)) 
+
+length(unique(testyears$keys))
+# [1] 334
+
+```
+
+## Store absence observations
+
+```{r, absences.2017.2024}
+
+# Use the b value as normal, then to adjust the scalar, find the 
+final.comb.dat2017.2024.absences <- final.comb.dat2017.2024 %>%
+  filter(sciname != "Sardinops sagax") %>%
+  mutate(weight = 0,
+         CATCH_WEIGHT = 0,
+         len.bin = NA,
+         W_theory = 0,
+         Condition_Factor = NA,
+         W_best_estimate = 0,
+         Bio_Weight_kg = 0,
+         Subsample_Total_W = 0,
+         Haul_Total_Catch_W = 0,
+         Bin_Subsample_W = 0,
+         Bin_Prop = NA,
+         Bin_Haul_Biomass = 0,
+         Indiv_W_Scaled = 0,
+         Scaled_Biomass_Contribution = 0,
+         Expansion_Factor = NA,
+         age = NA,
+         mean.length.age = NA
+         )
+         
+```
+
+## Define length bin definitions for Sardine only
+
+Because ageing is uncertain, propose length bins where the first 100 mm are grouped (considered age 0), and where every 2.25 cm is added.
+
+```{r, length.bin.defs}
+
+len.bins2017.2024 <- final.comb.dat2017.2024 %>%
+  filter(sciname == "Sardinops sagax" & !is.na(standard_length))
+
+head(len.bins2017.2024)
+
+range(len.bins2017.2024$standard_length)
+# [1] 13.5 26.1
+
+#-------------------------------------------------------------
+# Check lowest intervals
+#-------------------------------------------------------------
+
+len_less150_2017.2024 <- len.bins2017.2024 %>%
+  filter(standard_length < 15) %>%
+  mutate(len.bin = "less150")
+
+len_150to200_2017.2024 <- len.bins2017.2024 %>%
+  filter(standard_length >= 15 & standard_length < 20) %>%
+  mutate(len.bin = "150to200")
+
+len_200plus_2017.2024 <- len.bins2017.2024 %>%
+  filter(standard_length >= 20) %>%
+  mutate(len.bin = "200+")
+
+#-------------------------------------------------------------
+# Join data sets 
+#-------------------------------------------------------------
+
+len.bins2_2017.2024 <- rbind(len_less150_2017.2024,
+                             len_150to200_2017.2024, 
+                             len_200plus_2017.2024)
+
+```
+
+## Test conditional weighting based on the observed length bins
+
+```{r, Hybrid.reweight.with.real.obs.and.theoretical.2017.2024}
+
+#---------------------------------------------------------------
+# First re-weight the data using the recorded observations where 
+# available, and the theoretical where not available.
+#---------------------------------------------------------------
+
+# 1. Define Haul Keys
+haul_keys <- c("keys", "UNIQUE_EVENT")
+
+final_hybrid_reconstruction2017.2024 <- 
+  len.bins2_2017.2024 %>%
+  # --- Step A: Calculate Theoretical Baseline ---
+  mutate(W_theory = 7.52e-06 * standard_length^3.23) %>%
+  
+  group_by(across(all_of(haul_keys))) %>%
+  mutate(
+    # How much do our measured fish deviate from the 
+    # 'textbook' weight?
+    ## CF = (Sum of Real Weights) / (Sum of Theoretical Weights 
+    ## for those same fish)
+    Condition_Factor = sum(weight, na.rm = TRUE) / 
+                       sum(if_else(!is.na(weight), W_theory, 0), 
+                           na.rm = TRUE),
+    
+    # If no weights were taken at all, default the Factor to 1.0
+    Condition_Factor = if_else(is.nan(Condition_Factor) | 
+                                 Condition_Factor == 0, 
+                               1.0, Condition_Factor),
+    
+    # Create a 'Best Estimate' weight for EVERY fish
+    # Use real weight if we have it; use (Theory * CF) if we don't
+    W_best_estimate = if_else(!is.na(weight), weight, 
+                              W_theory * Condition_Factor),
+    
+    # Total Weight of the Subsample (now complete for all 
+    # measured lengths)
+    Subsample_Total_W = sum(W_best_estimate),
+    Haul_Total_Catch_W = first(CATCH_WEIGHT)
+  ) %>%
+  
+  # --- Step B: Partition the Catch ---
+  group_by(across(all_of(c(haul_keys, "len.bin")))) %>%
+  mutate(
+    Bin_Subsample_W = sum(W_best_estimate),
+    Bin_Prop = Bin_Subsample_W / first(Subsample_Total_W),
+    
+    # Partition the based on this hybrid proportion
+    Bin_Haul_Biomass = Bin_Prop * first(Haul_Total_Catch_W),
+    
+    # Final 'Scaled' Individual Weight 
+    # (Sum of these = CATCH_WEIGHT)
+    Indiv_W_Scaled = Bin_Haul_Biomass / n()
+  ) %>%
+  ungroup()
+
+# View(final_hybrid_reconstruction2017.2024)
+
+#---------------------------------------------------------------
+# Second, define the expansion factor and summarise the output
+#---------------------------------------------------------------
+
+final_production_data2017.2024 <- 
+  final_hybrid_reconstruction2017.2024 %>%
+  mutate(
+    # 1. BIOLOGICAL WEIGHT: This is the fish's actual 
+    # size (e.g., ~0.08 kg)
+    ## Use this for Length-Weight plots and Condition analysis
+    Bio_Weight_kg = W_best_estimate,
+    
+    # 2. EXPANSION WEIGHT: This is the scaled contribution (~80 kg)
+    ## Use this ONLY for summing up Total Biomass or 
+    ## Stacked Bar Charts
+    Scaled_Biomass_Contribution = Indiv_W_Scaled,
+    
+    # 3. THE LINK: The 'Numerical Expansion Factor'
+    ## This tells you one measured fish represents 'X' fish in 
+    ## the ocean
+    Expansion_Factor = 
+      Scaled_Biomass_Contribution / Bio_Weight_kg
+  )
+
+# View(final_production_data2017.2024)
+
+#--------------------------------------------------------------
+# Investigate comparable hauls from 2017-2019
+#--------------------------------------------------------------
+
+# How many huals with sardine catches
+length(unique(final_production_data2017.2024$keys))
+# [1] 5
+
+# Conditon factor range
+range(final_production_data2017.2024$Condition_Factor)
+# [1] 0.8653652 0.9601620
+
+
+
+#--------------------------------------------------------------
+# Third, check the math and data quality
+#--------------------------------------------------------------
+
+# The sum of scaled weights should exactly match
+# the recorded total species weight
+sum(final_production_data2017.2024$Scaled_Biomass_Contribution) -
+  sum(unique(final_production_data2017.2024$CATCH_WEIGHT))
+# [1] 0.03
+
+#-----------------------------
+
+# The scaled biomass is not capturing the observed
+# weights well. Check if the issue lies in the fish weight 
+# data wrangling step
+error_report_2017.2024 <- 
+  final_production_data2017.2024 %>%
+  group_by(across(all_of(haul_keys))) %>%
+  summarise(
+    Expected = first(CATCH_WEIGHT),
+    Actual = sum(Indiv_W_Scaled),
+    Diff = Expected - Actual,
+    .groups = "keep"
+  ) %>%
+  filter(abs(Diff) > 0.001)
+
+# View(error_report_2017.2024)
+
+#-----------------------------
+
+# It seems the math is correct and the issue
+# is likely in the sample size relative to the
+# Haul size. Check if the subsample size (being far smaller) is 
+# not representative of the haul
+summary(final_production_data2017.2024$Expansion_Factor)
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 0.7895  0.9024  0.9941  2.6681  5.2825  5.9091 
+
+# What the Summary tells us:
+
+## That Max of 5.9091  is still a "green light" in the data. At worst case, we are working with a scale of x6. 
+
+## Min (0.79): Some "subsamples" were actually heavier than the recorded species weight (likely a data entry error or a "dirty" weight including debris), effectively scaling the fish down.
+
+## Median (0.99): A median expansion factor of ~1.0 means that for 50% of your records, you measured effectively the entire catch
+
+## The 3rd Quartile (5.28): Even at the 75th percentile, your expansion factor is only 5.3. This means that for 75% of your data, you sampled at least 1/5th of the total catch.
+
+## Mean (2.67): data distribution is no longer "skewed".
+
+#-----------------------------
+# Check that for every haul, the sum of the 
+# Scaled_Biomass_Contribution is equal to the CATCH_WEIGHT
+test.total.bios.2017.2024 <- 
+  final_production_data2017.2024 %>%
+  group_by(keys, UNIQUE_EVENT, CATCH_WEIGHT) %>%
+  summarise(TotScaleBio = round(
+    sum(Scaled_Biomass_Contribution), digits = 3
+    ),
+    .groups = "keep"
+    ) %>%
+  ungroup() %>%
+  mutate(TotalBioDiff = CATCH_WEIGHT - TotScaleBio)
+
+unique(test.total.bios.2017.2024$TotalBioDiff)
+# [1] 0
+
+#---------------------------------------------------------------
+# Fourth, create plot showing the the biological weight per length
+#---------------------------------------------------------------
+
+# Plot individual estimated weights per haul by length
+## Note this includes the pseudo values!
+Hybrid.reweighting.w.correction2017.2024 <-
+ ggplot(final_production_data2017.2024, 
+         aes(x = standard_length, 
+             y = Bio_Weight_kg,
+             color = UNIQUE_EVENT)) + # Move color inside aes()
+  geom_point(alpha = 0.5) + # Alpha helps see overlapping points
+  theme_minimal() +
+  theme(legend.position = "none") + # Hides the massive legend
+  labs(title = "Validation of Conditional Weighting Based on Observed Length Bins: Sardinops sagax",
+       x = "Standard Length (cm)",
+       y = "Hybrid Estimation Individual Weight (kg)")
+
+Hybrid.reweighting.w.correction2017.2024
+
+ggsave2(
+   filename=
+     "Hybrid.reweighting.w.correction.plot.2017.2024.Canada.jpeg",
+   plot=Hybrid.reweighting.w.correction2017.2024, device="jpeg", 
+   path=here(dir, "Final.Figures", "Test.Length.Comps.Methods"),
+   dpi=1200, width = 29, height=21, unit="cm", limitsize = FALSE)
+
+#---------------------------------------------------------------
+# Fifth, create plot showing the the expansion weight per length
+# bin
+#---------------------------------------------------------------
+
+# Plot individual estimated weights per haul by length
+scaled.reweighting.w.correction2017.2024 <-
+  ggplot(final_production_data2017.2024, 
+         aes(x = UNIQUE_EVENT,
+             y = Scaled_Biomass_Contribution,
+             fill = as.factor(len.bin)
+             )
+         ) +
+  geom_bar(stat = "identity", 
+           position = "stack", 
+           linewidth = 0.01) +
+  scale_fill_viridis_d(option = "plasma", 
+                       name = "Length Bin (cm)") +
+  theme_minimal() +
+  labs(
+    title = "Proportional Biomass Distribution by Hauls",
+    subtitle = "Total Haul Weights Partitioned by Length Bins",
+    x = "Hauls",
+    y = "Expansion Biomass Est. (kg)") +
+    theme(axis.text.x = element_text(angle = 45, 
+                                     vjust = 0.5, 
+                                     hjust= 0.5)
+          )
+
+scaled.reweighting.w.correction2017.2024
+
+ggsave2(
+  filename="expansion_biomass_per.haul.plot.2017.2024.Canada.jpeg",
+  plot=scaled.reweighting.w.correction2017.2024, device="jpeg", 
+  path=here(dir, "Final.Figures",
+            "Test.Length.Comps.Methods"),
+  dpi=1200, width = 29, height=21,  
+  unit="cm", limitsize = FALSE)
+
+```
+
+# Join the four data sets
+
+```{r, haul.years}
+
+#------------------------------------------
+# For 2008 to 2014 data sets
+#------------------------------------------
+
+# Add place holder columns to presence data
+final_production_data1999.2014 <-
+  final_production_data1999.2014 %>%
+  mutate(age = NA,
+         mean.length.age = NA)
+
+# Check for column mismatches
+!colnames(final_production_data1999.2014) %in%
+  colnames(final.comb.dat1999.2014.absences)
+#  [1] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [12] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [23] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [45] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [56] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [67] FALSE
+
+# Check for column mismatches
+!colnames(final.comb.dat1999.2014.absences) %in%
+  colnames(final_production_data1999.2014)
+#  [1] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [12] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [23] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [45] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [56] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [67] FALSE
+
+# Join 1999.2014 data sets
+dat1999.2014 <- rbind(final_production_data1999.2014,
+                      final.comb.dat1999.2014.absences)
+
+#------------------------------------------
+# For 2017 to 2024 data sets
+#------------------------------------------
+
+# Add place holder columns to presence data
+final_production_data2017.2024 <-
+  final_production_data2017.2024 %>%
+  mutate(age = NA,
+         mean.length.age = NA)
+
+# Check for column mismatches
+!colnames(final_production_data2017.2024) %in%
+  colnames(final.comb.dat2017.2024.absences)
+#  [1] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [12] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [23] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [45] FALSE
+
+# Check for column mismatches
+!colnames(final.comb.dat2017.2024.absences) %in%
+  colnames(final_production_data2017.2024)
+#  [1] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [12] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [23] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [34] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [45] FALSE
+
+# Join 2017.2024 data sets
+dat2017.2024 <- rbind(final_production_data2017.2024,
+                      final.comb.dat2017.2024.absences)
+
+#------------------------------------------
+# Join 2008 to 2014 data with 2017 to 
+# 2024 data
+#------------------------------------------
+
+# Determine what columns do not exist in the newer data
+!colnames(dat1999.2014) %in% colnames(dat2017.2024)
+#  [1]  TRUE  TRUE  TRUE FALSE  TRUE FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE  TRUE
+# [14]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+# [27]  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [40] FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE FALSE  TRUE  TRUE  TRUE FALSE  TRUE
+# [53] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [66] FALSE FALSE
+
+names(dat1999.2014)[c(1:3,5,10:30,44:46,48:50,52)]
+#  [1] "BRIDGE_LOG_ID"          "TRIP_ID"               
+#  [3] "EVENT_DATE"             "TOW_NUMBER"            
+#  [5] "TOW_DURATION"           "AVG_BOTTOM_DEPTH"      
+#  [7] "AVG_TOW_DEPTH"          "TARGET_DEPTH_CEILING"  
+#  [9] "AVG_CAPTURE_DEPTH"      "DISTANCE_TRAVELLED"    
+# [11] "PFMA_SUB_AREA_NUMBER.x" "AREA_CODE.x"           
+# [13] "SUB_AREA_CODE.x"        "MOUTH_OPENING_HEIGHT"  
+# [15] "MOUTH_OPENING_WIDTH"    "WARP_LENGTH"           
+# [17] "SWEPT_VOLUME"           "SPEED"                 
+# [19] "TRIP_NAME"              "TRIP_YEAR"             
+# [21] "AREA_CODE.y"            "SUB_AREA_CODE.y"       
+# [23] "PFMA_SUB_AREA_NUMBER.y" "CATCH_ID"              
+# [25] "SPECIES_CODE"           "FORKLENGTH_MM"         
+# [27] "WEIGHT_G"               "CATCH_COUNT"           
+# [29] "SPECIMEN_ID"            "FISH_ID"               
+# [31] "FISH_LAB_ID"            "date"                 
+
+# Remove unnecessary columns
+dat1999.2014.short <- dat1999.2014[,-c(1:3,5,10:14,16:30,44:46,48:50)]
+
+# Create new column in dat2017.2024
+dat2017.2024 <- dat2017.2024 %>%
+  mutate(date = date(END_DEPLOYMENT_TIME),
+         DISTANCE_TRAVELLED = NA) %>%
+  mutate(Year = year(date),
+         Month = month(date))
+
+# Determine what columns do not exist in the older data
+!colnames(dat2017.2024) %in% colnames(dat1999.2014.short)
+#  [1] FALSE  TRUE  TRUE FALSE  TRUE  TRUE FALSE FALSE FALSE FALSE  TRUE  TRUE FALSE
+# [14]  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE
+# [27] FALSE FALSE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [40] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+
+names(dat2017.2024)[c(2:3,5:6,11:12,14:15,26,29)]
+# [1] "STRATUM"     "BLOCK"       "EVENT_TYPE"  "DAY_NIGHT"   "USABILITY"  
+# [6] "VOLUME_KM3"  "Nsamp"       "Note"        "UNIQUE_FISH" "geometry" 
+
+# Remove unnecessary columns
+dat2017.2024.short <- dat2017.2024[-c(2:3,5,11:12,14:15,26)]
+
+# Remove geometry
+dat2017.2024.short <- dat2017.2024.short %>%
+  st_drop_geometry()
+
+# Create new column in dat1999.2014.short
+dat1999.2014.short <- dat1999.2014.short %>%
+  mutate(DAY_NIGHT = NA) 
+
+colnames(dat1999.2014.short) %in% colnames(dat2017.2024.short)
+#  [1] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+# [15] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+# [29] TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+
+colnames(dat2017.2024.short) %in% colnames(dat1999.2014.short)
+#  [1]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+# [12]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+# [23]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+# [34]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+
+# Do final join
+all.dat <- rbind(dat1999.2014.short, dat2017.2024.short)
+
+```
+
+# Sum over like values
+
+```{r, 2008.2024.absent.trips}
+
+colnames(all.dat)
+#  [1] "Year"                        "BEGIN_DEPLOYMENT_TIME"      
+#  [3] "END_DEPLOYMENT_TIME"         "BEGIN_RETRIEVAL_TIME"       
+#  [5] "END_RETRIEVAL_TIME"          "DISTANCE_TRAVELLED"         
+#  [7] "CATCH_WEIGHT"                "keys"                       
+#  [9] "UNIQUE_EVENT"                "start_latitude"             
+# [11] "start_longitude"             "stop_latitude"              
+# [13] "stop_longitude"              "FID"                        
+# [15] "Month"                       "Season"                     
+# [17] "area.op.m2"                  "sciname"                    
+# [19] "standard_length"             "NBRE_Haul"                  
+# [21] "weight"                      "date"                       
+# [23] "len.bin"                     "W_theory"                   
+# [25] "Condition_Factor"            "W_best_estimate"            
+# [27] "Subsample_Total_W"           "Haul_Total_Catch_W"         
+# [29] "Bin_Subsample_W"             "Bin_Prop"                   
+# [31] "Bin_Haul_Biomass"            "Indiv_W_Scaled"             
+# [33] "Bio_Weight_kg"               "Scaled_Biomass_Contribution"
+# [35] "Expansion_Factor"            "age"                        
+# [37] "mean.length.age"             "DAY_NIGHT"             
+
+```
+
+# Find equilibrium times
+
+Note unlike the U.S. CPS ATM Survey these are in Pacific Standard Time (PST). You will need to cross check the values with reported day Trawl or night Trawl to know if the origin was correctly applied.
+
+```{r, 2008.2024.sun.event}
+
+unique(is.na(all.dat$BEGIN_DEPLOYMENT_TIME))
+# [1] FALSE  TRUE
+unique(is.na(all.dat$END_DEPLOYMENT_TIME))
+# [1] FALSE
+unique(is.na(all.dat$BEGIN_RETRIEVAL_TIME))
+# [1] FALSE  TRUE
+unique(is.na(all.dat$END_RETRIEVAL_TIME))
+# [1] FALSE  TRUE
+
+PreAbs2 <- all.dat %>%
+  mutate(
+    # Find the equilibrium time
+    datetimePST = # If daylight savings was used use something like 
+              ## "America/Vancouver", otherwise use "Etc/GMT+8".
+      as.POSIXct(END_DEPLOYMENT_TIME, tz = "Etc/GMT+8"),
+    time.step = paste(Year," - ", Month, sep="")
+    ) %>%
+  # Remove resolved rows
+  select(-c(BEGIN_DEPLOYMENT_TIME, END_DEPLOYMENT_TIME,
+            BEGIN_RETRIEVAL_TIME, END_RETRIEVAL_TIME))
+
+dim(PreAbs2)
+# [1] 49044  36
+
+# View(PreAbs2)
+
+# Note data will be in wgs84
+area.transects.final.sf <- PreAbs2 %>%
+  select(-FID) %>%
+  ungroup() %>%
+  mutate(FID = row_number()) %>%
+  make_transect_sf(., crs = 4326) 
+
+```
+
+# Calculate distance between start and stop of haul
+
+```{r, start.stop.dist}
+
+area.transects.final.sf2 <- area.transects.final.sf %>%
+# Define coordinate pairs
+  group_by(keys, UNIQUE_EVENT) %>%
+  mutate(
+    start.coords = purrr::pmap(
+      list(start_longitude, start_latitude),
+      ~ st_point(c(..1, ..2))
+    ) %>%
+      st_sfc(crs = 4326),
+
+    end.coords = purrr::pmap(
+      list(stop_longitude, stop_latitude),
+      ~ st_point(c(..1, ..2))
+    ) %>%
+      st_sfc(crs = 4326)
+  ) %>%
+  ungroup()  
+
+# View(area.transects.final.sf2)
+
+area.transects.final.sf3 <- area.transects.final.sf2 %>%
+  group_by(keys, UNIQUE_EVENT) %>%
+  # Calculate distance travelled
+  mutate(dist.trvl = geosphere::distVincentyEllipsoid(
+    p1=st_coordinates(start.coords),
+    p2=st_coordinates(end.coords),
+    a=6378137,
+    b=6356752.3142,
+    f=1/298.257223563)) %>%
+  ungroup() 
+
+range(area.transects.final.sf3$dist.trvl)
+# [1] 0.0 424241.4
+
+#-------------------------------------------------------------
+# Remove entries where no distance was travelled
+#-------------------------------------------------------------
+
+# Identify observations with the same start and stop location
+dropped.dat <- area.transects.final.sf3 %>%
+  mutate(dist.trvl.m = as.numeric(dist.trvl)) %>%
+  filter(dist.trvl.m == 0)
+length(unique(dropped.dat$dist.trvl.m))
+# [1] 1
+
+# Drop observations with the same start and stop locations
+area.transects.final.sf4 <- area.transects.final.sf3 %>%
+  mutate(dist.trvl.m = as.numeric(dist.trvl)) %>%
+  filter(dist.trvl.m != 0)  %>%
+  select(-dist.trvl)
+
+```
+
+We confirmed that the original data was in nautical miles and that there is no issue in the distance calculation method. 
+
+# Calculate sweep are
+
+Note there are some years with missing area opening dimensions. Investigate what to do with these.
+
+## Check where there is no observation for gear opening
+
+```{r, check.no.gear.config.obs}
+
+# Filter where no gear opening information is present
+test.na.area <- area.transects.final.sf4 %>%
+  filter(is.na(area.op.m2))
+
+sort(unique(test.na.area$Year))
+# [1] 2001 2002 2003 2004 2005 2011 2013
+
+test.survey.cruises <- test.na.area %>%
+  st_drop_geometry() %>%
+  select(Year, UNIQUE_EVENT) %>%
+  mutate(cruise = word(UNIQUE_EVENT, 1, 4, sep = "-")) %>%
+  group_by(Year, cruise) %>%
+  summarise(n = n_distinct(UNIQUE_EVENT), .groups = "drop")
+
+View(test.survey.cruises)
+
+# See if mean is reasonable for 2013
+gear.op.2001to2005_2011and2013 <- 
+  area.transects.final.sf4 %>%
+  filter(Year %in% unique(test.na.area$Year) &
+           !is.na(area.op.m2)) %>%
+  ggplot(aes(x = area.op.m2, fill = as.factor(Year))) +
+  geom_histogram(bins = 50, , color = "white") +
+  labs(title = "Distribution of gear opening (Height * Width)",
+       x = "Area m2",
+       y = "Count")
+
+gear.op.2001to2005_2011and2013
+
+ggsave2(filename = 
+          "Canadian.IPES.2001to2005_2011and2013.annual.gear.opening.jpeg",
+        plot = gear.op.2001to2005_2011and2013, 
+        device ="jpeg",
+        path = here(dir, "Final.Figures"),
+        dpi = 1200, width = 29, height = 21,
+        unit = "cm", limitsize = FALSE)
+
+```
+
+## Take the mean year gear opening
+
+```{r, year.mean.opening}
+
+test.year.op <- area.transects.final.sf4 %>%
+  group_by(Year) %>%
+  mutate(avg.sweep.m2 = mean(area.op.m2, na.rm = T),
+         avg.sweep.m3 = avg.sweep.m2*dist.trvl.m,
+         sweep.m3 = area.op.m2*dist.trvl.m,
+         Density.kg.m3 = 
+           Scaled_Biomass_Contribution/sweep.m3,
+         Density.g.m3 = 
+           Scaled_Biomass_Contribution*1000/sweep.m3) %>%
+  ungroup()
+
+unique(is.na(test.year.op))
+
+dim(area.transects.final.sf4)
+# [1] 48773    40
+
+dim(test.year.op)
+# [1] 48773    45
+
+# Check difference between reported and averaged gear opening
+test.gear.opav <- tibble(Year = test.year.op$Year,
+                         rep_m2 = test.year.op$area.op.m2,
+                         avg_m2 = test.year.op$avg.sweep.m2) %>%
+  mutate(dif_m2 = rep_m2 - avg_m2)
+
+range(test.gear.opav$dif_m2, na.rm = TRUE)
+# [1] -541.1205  831.2395
+
+unique(is.na(test.gear.opav$dif_m2))
+# [1] FALSE  TRUE
+
+#-------------------------------------------------------------
+# Plot original distribution
+#-------------------------------------------------------------
+
+original.gear.op <-
+  test.gear.opav %>%
+  ggplot(aes(x = rep_m2)) +
+  geom_histogram(bins = 10, fill = "red", color = "white") +
+  labs(title = "Original gear (Height * Width)",
+       x = "Original m2",
+       y = "Count") +
+  # This keeps X fixed but lets Y adjust per year
+  facet_wrap(~Year, scales = "free_y")
+
+original.gear.op
+
+ggsave2(filename = "Canadian.IPES.original.annual.gear.opening.jpeg",
+        plot = original.gear.op, 
+        device ="jpeg",
+        path = here(dir, "Final.Figures"),
+        dpi = 1200, width = 29, height = 21,
+        unit = "cm", limitsize = FALSE)
+
+#-------------------------------------------------------------
+# Plot annually averaged distribution
+#-------------------------------------------------------------
+
+mean.gear.op <- 
+  test.gear.opav %>%
+  ggplot(aes(x = avg_m2)) +
+  geom_histogram(bins = 10, fill = "purple", color = "white") +
+  labs(title = "Average gear (Height * Width)",
+       x = "Mean m2",
+       y = "Count") +
+  # This keeps X fixed but lets Y adjust per year
+  facet_wrap(~Year, scales = "free_y")
+
+mean.gear.op
+
+ggsave2(filename = "Canadian.IPES.mean.annual.gear.opening.jpeg",
+        plot = mean.gear.op, 
+        device ="jpeg",
+        path = here(dir, "Final.Figures"),
+        dpi = 1200, width = 29, height = 21,
+        unit = "cm", limitsize = FALSE)
+
+#-------------------------------------------------------------
+# Plot difference in distribution
+#-------------------------------------------------------------
+
+compare.gear.op <- 
+  test.gear.opav %>%
+  ggplot(aes(x = dif_m2)) +
+  geom_histogram(bins = 10, fill = "steelblue", color = "white") +
+  labs(title = "Difference from original and averaged gear (Height * Width)",
+       x = "Difference in m2",
+       y = "Count") +
+  # This keeps X fixed but lets Y adjust per year
+  facet_wrap(~Year, scales = "free_y")
+
+compare.gear.op
+
+ggsave2(filename = "Canadian.IPES.mean.annual.gear.opening.compare.jpeg",
+        plot = compare.gear.op, 
+        device ="jpeg",
+        path = here(dir, "Final.Figures"),
+        dpi = 1200, width = 29, height = 21,
+        unit = "cm", limitsize = FALSE)
+
+```
+
+## Apply average by case and save output
+
+Note that it does not make sense to take the average gear opening since there is greater variability in some years. For the final shape file, only apply the average when there is no data entry.
+
+```{r, final.shape.object}
+
+# For missing gear opening
+CanadianDat <- area.transects.final.sf4 %>%
+  group_by(Year) %>%
+  # Recalculate the density using average gear opening value
+  mutate(
+    avg.sweep.m2 = mean(area.op.m2, na.rm = T)
+    ) %>%
+  ungroup() %>%
+  mutate(Fin_sweep.m2 = 
+           case_when(
+             is.na(area.op.m2) ~ as.numeric(avg.sweep.m2),
+             !is.na(area.op.m2) ~ as.numeric(area.op.m2)
+             )
+         ) %>%
+  mutate(Fin_sweep.m3 = Fin_sweep.m2*dist.trvl.m) %>%
+  distinct() %>%
+  # Calculate density for total haul
+  mutate(
+    Haul.kg.m3 = CATCH_WEIGHT/Fin_sweep.m3,
+    Haul.g.m3 = CATCH_WEIGHT*1000/Fin_sweep.m3
+    ) %>%
+  distinct() %>%
+  # Calculate density per length bin
+  group_by(keys, UNIQUE_EVENT, len.bin) %>%
+  # Calculate density for total haul
+  mutate(
+    LenBin.kg.m3 = Bin_Haul_Biomass/Fin_sweep.m3,
+    LenBin.g.m3 = Bin_Haul_Biomass*1000/Fin_sweep.m3) %>%
+  distinct() %>%
+  ungroup()
+
+unique(is.na(CanadianDat))
+
+```
+
+# Adjust names to match with U.S. data set and add clarity
+
+```{r, join.sunrise.set.and.dat}
+
+# Load pre-step data
+usdat <- fread(
+  here(dir,"Data", "Shapefiles",
+       "area.transects.final.2006.2010.csv"), sep = ",")
+
+# Check for mismatch column names
+!colnames(usdat) %in% colnames(CanadianDat)
+#  [1]  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE  TRUE FALSE
+# [14]  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE  TRUE  TRUE FALSE FALSE FALSE FALSE
+# [27]  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [40] FALSE FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE
+# [53] FALSE FALSE FALSE  TRUE FALSE FALSE FALSE FALSE
+
+# Find unmatched column names
+names(usdat)[c(1:4,9:12,14:19,21:22,27:28,45:49,56)]
+#  [1] "cruise"                   "ship"                     "haul"                    
+#  [4] "collection"               "itis_tsn"                 "scientific_name"         
+#  [7] "subsample_weight"         "remaining_weight"         "beginTransect"           
+# [10] "endTransect"              "transect.coords"          "haulback_time.utc"       
+# [13] "equilibrium_time.utc"     "Species_weight"           "subsample_count"         
+# [16] "specimen_number"          "haulback_time.pacific"    "equilibrium_time.pacific"
+# [19] "lat"                      "lon"                      "sunrise_pacific"         
+# [22] "sunset_pacific"           "cluster.grp"              "sweep.m3" 
+
+# Remove unnecessary columns. This is just to make 
+# filtering easier. You will need to still fix these when you
+# join the U.S. and Canadian data sets.
+names(usdat)[-c(1:4,9,11:12,14:18,21:22,27,45:49)]
+#  [1] "start_latitude"              "start_longitude"            
+#  [3] "stop_latitude"               "stop_longitude"             
+#  [5] "scientific_name"             "keys"                       
+#  [7] "Species_weight"              "standard_length"            
+#  [9] "weight"                      "date"                       
+# [11] "Year"                        "Month"                      
+# [13] "equilibrium_time.pacific"    "age"                        
+# [15] "mean.length.age"             "len.bin"                    
+# [17] "W_theory"                    "Condition_Factor"           
+# [19] "W_best_estimate"             "Subsample_Total_W"          
+# [21] "Haul_Total_Catch_W"          "Bin_Subsample_W"            
+# [23] "Bin_Prop"                    "Bin_Haul_Biomass"           
+# [25] "Indiv_W_Scaled"              "Bio_Weight_kg"              
+# [27] "Scaled_Biomass_Contribution" "Expansion_Factor"           
+# [29] "time.step"                   "FID"                        
+# [31] "Season"                      "start.coords"               
+# [33] "end.coords"                  "dist.trvl.m"                
+# [35] "area.op.m2"                  "sweep.m3"                   
+# [37] "Haul.kg.m3"                  "Haul.g.m3"                  
+# [39] "LenBin.kg.m3"                "LenBin.g.m3"   
+
+usdat.short <- usdat[,-c(1:4,9,11:12,14:18,21:22,27,45:49)]
+
+# Rename columns to match usdat
+CanadianDat.new <- CanadianDat %>%
+  rename(scientific_name = sciname,
+         equilibrium_time.pacific = datetimePST,
+         Species_weight = CATCH_WEIGHT) %>%
+  mutate(time.step = 
+           paste(Year," - ", Month, sep=""),
+         keys = paste(keys, UNIQUE_EVENT, sep = "_")
+         ) %>%
+  st_drop_geometry() %>%
+  # drop merged column
+  select(-UNIQUE_EVENT)
+
+# Check Canadian data set column names
+!colnames(CanadianDat.new) %in% colnames(usdat.short)
+#  [1] FALSE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [14]  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+# [27] FALSE FALSE FALSE FALSE FALSE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE  TRUE
+# [40]  TRUE  TRUE FALSE FALSE FALSE FALSE
+
+names(CanadianDat.new)[c(2,14,32,39:41)]
+# [1] "DISTANCE_TRAVELLED" "NBRE_Haul"          "DAY_NIGHT"         
+# [4] "avg.sweep.m2"       "Fin_sweep.m2"       "Fin_sweep.m3" 
+
+# Remove unnecessary columns
+CanadianDat.new.short <- CanadianDat.new %>%
+  select(-c(DISTANCE_TRAVELLED, DAY_NIGHT, avg.sweep.m2))
+
+# Save output and close
+fwrite(CanadianDat.new.short, 
+         here(dir, "Data", "Shapefiles","Canadian.set.1999.2024.csv"),
+       sep = ","
+       )
+
+```
+
+# Explore data summary for table
+
+```{r}
+
+View(CanadianDat.new.short)
+
+#---------------------------------------------------
+# 2001
+#---------------------------------------------------
+
+test2001 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2001)
+unique(test2001$Month)
+# [1] 7 8
+mean(test2001$TOW_DURATION, na.rm = T)
+# [1] 34.72897
+mean(test2001$SPEED, na.rm = T)
+# [1] NA
+mean(test2001$area.op.m2, na.rm = T)
+# [1] NA
+min(test2001$start_latitude, na.rm = T)
+# [1] 48.248
+max(test2001$start_latitude, na.rm = T)
+# [1] 54.804
+min(test2001$stop_latitude, na.rm = T)
+#[1] 48.249
+max(test2001$stop_latitude, na.rm = T)
+# [1] 54.95
+
+#---------------------------------------------------
+# 2002
+#---------------------------------------------------
+
+test2002 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2002)
+unique(test2002$Month)
+# [1] 8
+mean(test2002$TOW_DURATION, na.rm = T)
+# [1] 30.22727
+mean(test2002$SPEED, na.rm = T) # in km/h
+# [1] 8.144591
+mean(test2002$SPEED/1.852, na.rm = T) # in knots
+# [1] 4.397727
+mean(test2002$area.op.m2, na.rm = T)
+# [1] 451.0698
+unique(is.na(test2002$MOUTH_OPENING_HEIGHT))
+# [1] FALSE  TRUE
+mean(test2002$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 13.72093
+unique(is.na(test2002$MOUTH_OPENING_WIDTH))
+# [1] FALSE  TRUE
+mean(test2002$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 32.86047
+unique(is.na(test2002$start_latitude))
+# [1] FALSE
+min(test2002$start_latitude, na.rm = T)
+# [1] 48.323
+max(test2002$start_latitude, na.rm = T)
+# [1] 49.562
+unique(is.na(test2002$stop_latitude))
+# [1] FALSE 
+min(test2002$stop_latitude, na.rm = T)
+# [1] 48.321
+max(test2002$stop_latitude, na.rm = T)
+# [1] 49.531
+
+#---------------------------------------------------
+# 2003
+#---------------------------------------------------
+
+test2003 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2003)
+unique(test2003$Month)
+# [1] 8
+mean(test2003$TOW_DURATION, na.rm = T)
+# [1] 21.8172
+mean(test2003$SPEED, na.rm = T) # in km/h
+# [1] NaN
+mean(test2003$SPEED/1.852, na.rm = T) # in knots
+# [1] NaN
+mean(test2003$area.op.m2, na.rm = T)
+# [1] NaN
+unique(is.na(test2003$MOUTH_OPENING_HEIGHT))
+# [1] TRUE
+mean(test2003$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] NaN
+unique(is.na(test2003$MOUTH_OPENING_WIDTH))
+# [1] TRUE
+mean(test2003$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] NaN
+unique(is.na(test2003$start_latitude))
+# [1] FALSE
+min(test2003$start_latitude, na.rm = T)
+# [1] 48.516
+max(test2003$start_latitude, na.rm = T)
+# [1] 51.141
+unique(is.na(test2003$stop_latitude))
+# [1] FALSE 
+min(test2003$stop_latitude, na.rm = T)
+# [1] 48.513
+max(test2003$stop_latitude, na.rm = T)
+# [1] 51.141
+
+#---------------------------------------------------
+# 2004
+#---------------------------------------------------
+
+test2004 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2004)
+unique(test2004$Month)
+# [1] 8 7
+mean(test2004$TOW_DURATION, na.rm = T)
+# [1] 26.78125
+mean(test2004$SPEED, na.rm = T) # in km/h
+# [1] 8.402443
+mean(test2004$SPEED/1.852, na.rm = T) # in knots
+# [1] 4.536957
+mean(test2004$area.op.m2, na.rm = T)
+# [1] NaN
+unique(is.na(test2004$MOUTH_OPENING_HEIGHT))
+# [1] TRUE
+mean(test2004$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] NaN
+unique(is.na(test2004$MOUTH_OPENING_WIDTH))
+# [1] TRUE
+mean(test2004$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] NaN
+unique(is.na(test2004$start_latitude))
+# [1] FALSE
+min(test2004$start_latitude, na.rm = T)
+# [1] 48.28903
+max(test2004$start_latitude, na.rm = T)
+# [1] 51.00167
+unique(is.na(test2004$stop_latitude))
+# [1] FALSE 
+min(test2004$stop_latitude, na.rm = T)
+# [1] 48.28555
+max(test2004$stop_latitude, na.rm = T)
+# [1] 50.99448
+
+#---------------------------------------------------
+# 2005
+#---------------------------------------------------
+
+test2005 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2005)
+unique(test2005$Month)
+# [1] 8
+mean(test2005$TOW_DURATION, na.rm = T)
+# [1] 33.83019
+mean(test2005$SPEED, na.rm = T) # in km/h
+# [1] 8.250979
+mean(test2005$SPEED/1.852, na.rm = T) # in knots
+# [1] 4.455172
+mean(test2005$area.op.m2, na.rm = T)
+# [1] 384
+unique(is.na(test2005$MOUTH_OPENING_HEIGHT))
+# [1] FALSE TRUE
+mean(test2005$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 12
+unique(is.na(test2005$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2005$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 31.73585
+unique(is.na(test2005$start_latitude))
+# [1] FALSE
+min(test2005$start_latitude, na.rm = T)
+# [1] 48.664
+max(test2005$start_latitude, na.rm = T)
+# [1] 49.582
+unique(is.na(test2005$stop_latitude))
+# [1] FALSE 
+min(test2005$stop_latitude, na.rm = T)
+# [1] 48.635
+max(test2005$stop_latitude, na.rm = T)
+# [1] 49.57133
+
+#---------------------------------------------------
+# 2006
+#---------------------------------------------------
+
+test2006 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2006)
+unique(test2006$Month)
+# [1] 8 7
+mean(test2006$TOW_DURATION, na.rm = T)
+# [1] 24.48889
+mean(test2006$SPEED, na.rm = T) # in km/h
+# [1] 9.729173
+mean(test2006$SPEED/1.852, na.rm = T) # in knots
+# [1] 5.253333
+mean(test2006$area.op.m2, na.rm = T)
+# [1] 384
+unique(is.na(test2006$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+mean(test2006$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 12
+unique(is.na(test2006$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2006$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 32
+unique(is.na(test2006$start_latitude))
+# [1] FALSE
+min(test2006$start_latitude, na.rm = T)
+# [1] 48.631
+max(test2006$start_latitude, na.rm = T)
+# [1] 50.367
+unique(is.na(test2006$stop_latitude))
+# [1] FALSE 
+min(test2006$stop_latitude, na.rm = T)
+# [1] 48.631
+max(test2006$stop_latitude, na.rm = T)
+# [1] 50.367
+
+#---------------------------------------------------
+# 2007
+#---------------------------------------------------
+
+# No survey
+
+#---------------------------------------------------
+# 2008
+#---------------------------------------------------
+
+test2008 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2008)
+unique(test2008$Month)
+# [1] 8 7
+mean(test2008$TOW_DURATION, na.rm = T)
+# [1] 26.07143
+mean(test2008$SPEED, na.rm = T) # in km/h
+# [1] 9.450647
+mean(test2008$SPEED/1.852, na.rm = T) # in knots
+# [1] 5.102941
+mean(test2008$area.op.m2, na.rm = T)
+# [1] 364.1268
+unique(is.na(test2008$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+mean(test2008$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 11.33803
+unique(is.na(test2008$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2008$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 32.07042
+unique(is.na(test2008$start_latitude))
+# [1] FALSE
+min(test2008$start_latitude, na.rm = T)
+# [1] 48.26367
+max(test2008$start_latitude, na.rm = T)
+# [1] 50.411
+unique(is.na(test2008$stop_latitude))
+# [1] FALSE 
+min(test2008$stop_latitude, na.rm = T)
+# [1] 48.24633
+max(test2008$stop_latitude, na.rm = T)
+# [1] 50.411
+
+#---------------------------------------------------
+# 2009
+#---------------------------------------------------
+
+test2009 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2009)
+unique(test2009$Month)
+# [1] 8 7
+mean(test2009$TOW_DURATION, na.rm = T)
+# [1] 21
+mean(test2009$SPEED, na.rm = T) # in km/h
+# [1] 9.6
+mean(test2009$SPEED/1.852, na.rm = T) # in knots
+# [1] 5.187963
+mean(test2009$area.op.m2, na.rm = T)
+# [1] 364.0009
+unique(is.na(test2009$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+mean(test2009$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 11.98624
+unique(is.na(test2009$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2009$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 30.36697
+unique(is.na(test2009$start_latitude))
+# [1] FALSE
+min(test2009$start_latitude, na.rm = T)
+# [1] 48.387
+max(test2009$start_latitude, na.rm = T)
+# [1] 50.453
+unique(is.na(test2009$stop_latitude))
+# [1] FALSE 
+min(test2009$stop_latitude, na.rm = T)
+# [1] 48.367
+max(test2009$stop_latitude, na.rm = T)
+# [1] 50.416
+
+#---------------------------------------------------
+# 2010
+#---------------------------------------------------
+
+test2010 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2010)
+unique(test2010$Month)
+# [1] 8 7
+mean(test2010$TOW_DURATION, na.rm = T)
+# [1] 23.375
+mean(test2010$SPEED, na.rm = T) # in km/h
+# [1] 9.299127
+mean(test2010$SPEED/1.852, na.rm = T) # in knots
+# [1] 5.021127
+mean(test2010$area.op.m2, na.rm = T)
+# [1] 447.6111
+unique(is.na(test2010$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+mean(test2010$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 14
+unique(is.na(test2010$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2010$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 31.97222
+unique(is.na(test2010$start_latitude))
+# [1] FALSE
+min(test2010$start_latitude, na.rm = T)
+# [1] 48.45817
+max(test2010$start_latitude, na.rm = T)
+# [1] 50.68
+unique(is.na(test2010$stop_latitude))
+# [1] FALSE 
+min(test2010$stop_latitude, na.rm = T)
+# [1] 48.45833
+max(test2010$stop_latitude, na.rm = T)
+# [1] 50.65967
+
+#---------------------------------------------------
+# 2011
+#---------------------------------------------------
+
+test2011 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2011)
+unique(test2011$Month)
+# [1] 7
+mean(test2011$TOW_DURATION, na.rm = T)
+# [1] 22.02985
+mean(test2011$SPEED, na.rm = T) # in km/h
+# [1] 9.133727
+mean(test2011$SPEED/1.852, na.rm = T) # in knots
+# [1] 4.931818
+mean(test2011$area.op.m2, na.rm = T)
+# [1] 421.1719
+unique(is.na(test2011$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+mean(test2011$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 13.96875
+unique(is.na(test2011$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2011$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 30.20312
+unique(is.na(test2011$start_latitude))
+# [1] FALSE
+min(test2011$start_latitude, na.rm = T)
+# [1] 48.4342
+max(test2011$start_latitude, na.rm = T)
+# [1] 50.60507
+unique(is.na(test2011$stop_latitude))
+# [1] FALSE 
+min(test2011$stop_latitude, na.rm = T)
+# [1] 48.43208
+max(test2011$stop_latitude, na.rm = T)
+# [1] 50.60858
+
+#---------------------------------------------------
+# 2012
+#---------------------------------------------------
+
+test2012 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2012)
+unique(test2012$Month)
+# [1] 8 7
+mean(test2012$TOW_DURATION, na.rm = T)
+# [1] 22.02985
+mean(test2012$SPEED, na.rm = T) # in km/h
+# [1] 9.238955
+mean(test2012$SPEED/1.852, na.rm = T) # in knots
+# [1] 4.988636
+mean(test2012$area.op.m2, na.rm = T)
+# [1] 399.5682
+unique(is.na(test2012$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+mean(test2012$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 11.82955
+unique(is.na(test2012$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2012$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 33.79545
+unique(is.na(test2012$start_latitude))
+# [1] FALSE
+min(test2012$start_latitude, na.rm = T)
+# [1] 48.35802
+max(test2012$start_latitude, na.rm = T)
+# [1] 50.6905
+unique(is.na(test2012$stop_latitude))
+# [1] FALSE 
+min(test2012$stop_latitude, na.rm = T)
+# [1] 48.36635
+max(test2012$stop_latitude, na.rm = T)
+# [1] 50.68855
+
+#---------------------------------------------------
+# 2013
+#---------------------------------------------------
+
+test2013 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2013)
+unique(test2013$Month)
+# [1] 8
+mean(test2013$TOW_DURATION, na.rm = T)
+# [1] 19.66667
+mean(test2013$SPEED, na.rm = T) # in km/h
+# [1] 8.891667
+mean(test2013$SPEED/1.852, na.rm = T) # in knots
+# [1] 4.801116
+mean(test2013$area.op.m2, na.rm = T)
+# [1] 426.9828
+unique(is.na(test2013$MOUTH_OPENING_HEIGHT))
+# [1] FALSE TRUE 
+mean(test2013$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 13.96875
+unique(is.na(test2013$MOUTH_OPENING_WIDTH))
+# [1] FALSE TRUE
+mean(test2013$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 31.67241
+unique(is.na(test2013$start_latitude))
+# [1] FALSE
+min(test2013$start_latitude, na.rm = T)
+# [1] 48.32183
+max(test2013$start_latitude, na.rm = T)
+# [1] 50.57447
+unique(is.na(test2013$stop_latitude))
+# [1] FALSE 
+min(test2013$stop_latitude, na.rm = T)
+# [1] 48.33682
+max(test2013$stop_latitude, na.rm = T)
+# [1] 50.59495
+
+#---------------------------------------------------
+# 2014
+#---------------------------------------------------
+
+test2014 <- comb.dat1999.2014.sf.clean %>%
+  filter(Year == 2014)
+unique(test2014$Month)
+# [1] 8
+mean(test2014$TOW_DURATION, na.rm = T)
+# [1] 20.40678
+mean(test2014$SPEED, na.rm = T) # in km/h
+# [1] 9.137288
+mean(test2014$SPEED/1.852, na.rm = T) # in knots
+# [1] 4.933741
+mean(test2014$area.op.m2, na.rm = T)
+# [1] 407.8305
+unique(is.na(test2014$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+mean(test2014$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 12.0339
+unique(is.na(test2014$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2014$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 33.89831
+unique(is.na(test2014$start_latitude))
+# [1] FALSE
+min(test2014$start_latitude, na.rm = T)
+# [1] 48.33717
+max(test2014$start_latitude, na.rm = T)
+# [1] 50.59967
+unique(is.na(test2014$stop_latitude))
+# [1] FALSE 
+min(test2014$stop_latitude, na.rm = T)
+# [1] 48.33052
+max(test2014$stop_latitude, na.rm = T)
+# [1] 50.56993
+
+```
+
+```{r}
+
+#---------------------------------------------------
+# 2017
+#---------------------------------------------------
+
+test2017 <- comb.dat2017.2024.sf %>%
+  filter(Year == 2017)
+unique(test2017$Month)
+# [1] 8
+mean(test2017$TOW_DURATION, na.rm = T)
+# [1] 20.40678
+mean(test2014$SPEED, na.rm = T) # in km/h
+# [1] 9.137288
+mean(test2014$SPEED/1.852, na.rm = T) # in knots
+# [1] 4.933741
+mean(test2014$area.op.m2, na.rm = T)
+# [1] 407.8305
+unique(is.na(test2014$MOUTH_OPENING_HEIGHT))
+# [1] FALSE 
+mean(test2014$MOUTH_OPENING_HEIGHT, na.rm = T)
+# [1] 12.0339
+unique(is.na(test2014$MOUTH_OPENING_WIDTH))
+# [1] FALSE
+mean(test2014$MOUTH_OPENING_WIDTH, na.rm = T)
+# [1] 33.89831
+unique(is.na(test2014$start_latitude))
+# [1] FALSE
+min(test2014$start_latitude, na.rm = T)
+# [1] 48.33717
+max(test2014$start_latitude, na.rm = T)
+# [1] 50.59967
+unique(is.na(test2014$stop_latitude))
+# [1] FALSE 
+min(test2014$stop_latitude, na.rm = T)
+# [1] 48.33052
+max(test2014$stop_latitude, na.rm = T)
+# [1] 50.56993
+
+```
+
