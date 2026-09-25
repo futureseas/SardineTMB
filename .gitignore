@@ -9,6 +9,15 @@
 shared/
 
 #--------------------------------------
+# Remove in-house assessment of indices
+#--------------------------------------
+summerATsurvey_biomass.csv
+AcousticIndex.vs.sdmTMBIndex.Rmd
+AcoustandNearshoreIndices.vs.sdmTMBTrawl.obs
+Original.SummerSummaryTable.csv
+oldIPES.and.Canadian.Data.V3.Rmd
+
+#--------------------------------------
 #  Remove data Old data and functions
 #--------------------------------------
 Data/ATM CPS Survey/Scratch/
@@ -16,6 +25,7 @@ Data/Shapefiles/Scratch/
 Data/
 dropped.functions.R
 dropped.code.and.data.calls.R
+file.comparision.R
 
 #--------------------------------------
 # File is too large (EEZ boundary)
