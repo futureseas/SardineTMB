@@ -11,10 +11,7 @@ shared/
 #--------------------------------------
 # Remove in-house assessment of indices
 #--------------------------------------
-summerATsurvey_biomass.csv
 AcousticIndex.vs.sdmTMBIndex.Rmd
-AcoustandNearshoreIndices.vs.sdmTMBTrawl.obs
-Original.SummerSummaryTable.csv
 oldIPES.and.Canadian.Data.V3.Rmd
 
 #--------------------------------------
@@ -77,3 +74,4 @@ PastPresentations/
 Notes/
 *.pptx
 *.odp
+*.ods
