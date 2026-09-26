@@ -32,7 +32,8 @@ rm(list=ls())
 gc()
 
 load.lib <- c("tidyverse", "data.table", "cowplot", "sf", 
-              "here", "sdmTMB", "sdmTMBextra", 
+              "here", "sdmTMB", "sdmTMBextra", "rnaturalearth",
+              "rnaturalearthhires", 
               "mregions2" # Pulls official maritime EEZ records from MarineRegions.org
               ) 
 
@@ -41,7 +42,7 @@ install.lib <- load.lib[!load.lib %in% installed.packages()]
 for(lib in install.lib) install.packages(lib,dependencies=TRUE)
 sapply(load.lib,require,character=TRUE)
 
-sf_use_s2(TRUE)
+sf_use_s2(FALSE)
 
 dir <- here(getwd())
 
@@ -61,6 +62,10 @@ us.dat.2003.2005 <-
    read_sf(here(dir, "Data", "Shapefiles",
                 "area.transects.final.2003.2005.csv"))
 # View(us.dat.2003.2005)
+dim(us.dat.2003.2005)
+# [1] 3910   58
+dim(distinct(us.dat.2003.2005))
+# [1] 3910   58
 
 us.dat.2006.2010 <- 
    read_sf(here(dir, "Data", "Shapefiles",
@@ -71,11 +76,19 @@ us.dat.2011.2014 <-
    read_sf(here(dir, "Data", "Shapefiles",
                 "area.transects.final.2011.2014.csv"))
 # View(us.dat.2011.2014)
+dim(us.dat.2011.2014)
+# [1] 3826   58
+dim(distinct(us.dat.2011.2014))
+# [1] 3826   58
 
 us.dat.2015.2020 <- 
    read_sf(here(dir, "Data", "Shapefiles",
                 "area.transects.final.2015.2020.csv"))
 # View(us.dat.2015.2020)
+dim(us.dat.2015.2020)
+# [1] 6201   58
+dim(distinct(us.dat.2015.2020))
+# [1] 6201   58
 
 us.dat.2021.2023 <- 
    read_sf(here(dir, "Data", "Shapefiles",
@@ -86,6 +99,10 @@ us.dat.2024.2025 <-
    read_sf(here(dir, "Data", "Shapefiles",
                 "area.transects.final.2024.2025.csv"))
 # View(us.dat.2024.2025)
+dim(us.dat.2024.2025)
+# [1] 1070   58
+dim(distinct(us.dat.2024.2025))
+# [1] 1070   58
 
 # Join data sets
 full.us.dat <- rbind(us.dat.2003.2005, us.dat.2006.2010,
@@ -93,6 +110,11 @@ full.us.dat <- rbind(us.dat.2003.2005, us.dat.2006.2010,
                      us.dat.2021.2023, us.dat.2024.2025) |>
   # Create country label
   mutate(Country = "USA")
+
+dim(full.us.dat)
+# [1] 21211    59
+dim(distinct(full.us.dat))
+# [1] 21211    59
 
 colnames(full.us.dat)
 #  [1] "cruise"                      "ship"                       
@@ -126,12 +148,13 @@ colnames(full.us.dat)
 # [57] "Density.kg.m3"               "Density.g.m3"               
 # [59] "Country"                               
 
+# Note at this stage each row is a different length
 full.us.dat.short <- full.us.dat |>
-  select(keys, Year, Season, Species_weight, len.bin, Bin_Haul_Biomass, 
+  select(keys, Year, Season, Country, Species_weight, len.bin, Bin_Haul_Biomass, 
          Scaled_Biomass_Contribution, start_latitude, start_longitude, 
          stop_latitude, stop_longitude, scientific_name, standard_length, 
-         date, Haul.kg.m3, LenBin.kg.m3, Country, Bio_Weight_kg, area.op.m2,
-         sweep.m3) 
+         date, Haul.kg.m3, LenBin.kg.m3, Bio_Weight_kg,
+         area.op.m2, sweep.m3) 
 
 str(full.us.dat.short)
 
@@ -186,12 +209,16 @@ canadian.dat <-
         ) |>
   # Create country label
   mutate(Country = "Canada")
+dim(canadian.dat)
+# [1] 43800    41
+dim(distinct(canadian.dat))
+# [1] 43800    41
 
 canadian.dat.short <- canadian.dat |>
-  select(keys, Year, Season, Species_weight, len.bin, Bin_Haul_Biomass, 
+  select(keys, Year, Season, Country, Species_weight, len.bin, Bin_Haul_Biomass, 
          Scaled_Biomass_Contribution, start_latitude, start_longitude, 
          stop_latitude, stop_longitude, scientific_name, standard_length, 
-         date, Haul.kg.m3, LenBin.kg.m3, Country, Bio_Weight_kg, 
+         date, Haul.kg.m3, LenBin.kg.m3, Bio_Weight_kg, 
          Fin_sweep.m2, Fin_sweep.m3) 
 
 canadian.dat.short <- canadian.dat.short |>
@@ -233,15 +260,9 @@ full.cad.dat.short.test2 <- full.cad.dat.short.test |>
 dim(full.cad.dat.short.test2)
 # [1] 0 5
 
-
 #----------------------------------------------------
 # Join Data Sets
 #----------------------------------------------------
-
-# To make Supplementary data table 1, all years were previously included. But here only 2008 and 2012 to 2019 data will be kept to match the U.S. Survey data.
-
-canadian.dat.short <- canadian.dat.short |>
-  filter(Year > 2007 & !Year %in% c(2009:2011) & Year < 2020)
 
 full.dat <- rbind(full.us.dat.short,
                   canadian.dat.short)
@@ -258,6 +279,13 @@ full.dat2 <- full.dat |>
   ungroup()
 
 # View(full.dat2)
+
+dim(full.dat2)
+# [1] 65011    21
+dim(distinct(full.dat2))
+# [1] 43450    21
+
+colnames(full.dat2)
 
 ```
 
@@ -455,30 +483,6 @@ ggsave2(
 
 ```
 
-## Load Coastal Geometry
-
-Note that the original data download is no longer available from NOAA and the version in the github repo has been changed. To reproduce the results of this study, we provide a cropped original data copy using the full resolution.
-
-```{r, load.land.shp}
-
-land.barrier <- read_sf(here(dir, "LandBarrier", "land.barrier.shp"))
-
-
-
-# Read full resolution - Continental land masses and ocean islands, except Antarctica.
-##land.barrier <- read_sf(here(dir, "Data", "Shapefiles", "gshhg-shp-2.3.7",
-##                             "GSHHS_shp", "f", "GSHHS_f_L1.shp")) |>
-### Project to same coordinate system
-##st_transform(crs = st_crs(aea.custom)) |>
-### Trim to area extent
-##  st_crop(st_bbox(TwoSeas.dat))
-
-# write_sf(land.barrier, here(dir, "Data", "Shapefiles", "land.barrier.shp"))
-
-plot(land.barrier)
-
-```
-
 # Regroup data 2 Seasons
 
 There is moderate to strong temporal autocorrelation in the model as the modelling mean absolute error is significantly reduced by inclusion of temporal effects. However the spatial effects are not be well captured.
@@ -497,6 +501,7 @@ AllYears.dat <- full.dat2 |>
          # Combine year and numeric season
          YearSeas.nm = (Year + (Season.nm - 1) / 10))
 
+# Note this will be on row per standard length
 fwrite(AllYears.dat,
        here(dir, "Data",
             "AllYears.Unfiltered.Canada.and.CPS.ATM.Survey.Data.csv"),
@@ -504,7 +509,7 @@ fwrite(AllYears.dat,
 
 ```
 
-## For model runs by season (excluding spatialtemporal footprint mismatch)
+## For model runs by season (excluding spatiotemporal footprint mismatch)
 
 These are the years where you will actually run the model.
 
@@ -615,34 +620,6 @@ range(TwoSeas.dat2$Y)
 
 ## Construct the Seasonal Mesh: 
 
-```{r}
-
-testOldData <- read_sf(here("Data", "tempShapfiles",
-                            "cluster.with.area.defs.shp"))
-View(testOldData)
-
-testOldData.clip <- testOldData |>
-  select(keys, Year, Month, geometry)
-
-testNewData <- full.dat2 |>
-  filter(Year %in% c(2003:2024) & Country == "USA") |>
-  group_by(keys) |>
-  mutate(FID = keys) |>
-  make_transect_sf(crs = 4326) |>
-  ungroup() |>
-  st_transform(crs = aea_custom) |>
-  st_buffer(units::as_units(100,"m"),
-            max_cells=1e5)
-
-testNewData.clip <- testNewData |>
-  mutate(Month = month(date)) |>
-  select(keys, Year, Month, geometry)
-
-st_bbox(testOldData)
-st_bbox(testNewData)
-
-```
-
 ### Load coastline
 
 ```{r, load.coastal.geometries}
@@ -668,30 +645,17 @@ coastline <- st_read(shp_path)
 # 6. Verify plot
 plot(st_geometry(coastline))
 
+# 7. Define boundaries - previously derived from the full us data 
+# (all seasons and years 2003 to 2024) with 100 m buffer around transects
+## Note that this was done on an older data set that is no longer available so will be updated in the next
+## iteration
+bbox_vec <- c(xmin = -581615.7, ymin = -1218974.1, xmax = 949523.9, ymax = 1634799.5)
+
 # 7. Crop to study area
 coastline.clip <- coastline |>
-  st_transform(crs = st_crs(test.dat)) |>
+  st_transform(crs = st_crs(aea_custom)) |>
   ### Trim to area extent
-  st_crop(st_bbox(test.dat))
-
-```
-
-
-```{r}
-
-plot(st_geometry(coastline.clip))
-plot(st_geometry(land.barrier))
-
-# Test attributes
-land.barrier.no.geom <- land.barrier |> st_drop_geometry()
-coastline.clip.no.geom <- coastline.clip |> st_drop_geometry()
-waldo::compare(land.barrier.no.geom, coastline.clip.no.geom)
-
-# Test Coordinate Reference Systems
-waldo::compare(st_crs(land.barrier), st_crs(coastline.clip))
-
-# Test Bounding Boxes (spatial extent)
-waldo::compare(st_bbox(land.barrier), st_bbox(coastline.clip))
+  st_crop(bbox_vec)
 
 ```
 
@@ -719,7 +683,7 @@ meshTwoSeas.dat_filtered <- make_mesh(TwoSeas.dat_filtered,
 ## If greater than >1,000–2,000 nodes, 
 ## you’re likely in trouble unless you have a lot of RAM.
 length(meshTwoSeas.dat_filtered$mesh$loc[,1])
-# [1] 590
+# [1] 594
 
 plot(meshTwoSeas.dat_filtered)
 points(TwoSeas.dat_filtered$X, TwoSeas.dat_filtered$Y, col = "red", pch = 19, 
@@ -727,12 +691,12 @@ points(TwoSeas.dat_filtered$X, TwoSeas.dat_filtered$Y, col = "red", pch = 19,
 
 # proj_scaling should match units of (since we are working in m, but density
 # is in km, divide by 1000)
-barrier2 <- sdmTMBextra::add_barrier_mesh(meshTwoSeas.dat_filtered, land.barrier, proj_scaling = 1000)
+barrier2 <- sdmTMBextra::add_barrier_mesh(meshTwoSeas.dat_filtered, coastline.clip, proj_scaling = 1000)
 
 ## If greater than >1,000–2,000 nodes, 
 ## you’re likely in trouble unless you have a lot of RAM.
 length(barrier2$mesh$loc[,1])
-# [1] 590
+# [1] 594
 
 # Example plot code from ?add_barrier_mesh
 mesh_df_water2 <- barrier2$mesh_sf[barrier2$normal_triangles, ]
@@ -740,7 +704,7 @@ mesh_df_land2 <- barrier2$mesh_sf[barrier2$barrier_triangles, ]
 
 Mesh.with.barrier2 <-
 ggplot() +
-  geom_sf(data = land.barrier) +
+  geom_sf(data = coastline.clip) +
   geom_sf(data = mesh_df_water2, size = 1, colour = "blue") +
   geom_sf(data = mesh_df_land2, size = 1, colour = "green")
 
@@ -750,13 +714,7 @@ plot(meshTwoSeas.dat_filtered)
 points(TwoSeas.dat_filtered$X, TwoSeas.dat_filtered$Y, col = "red", pch = 19, 
        cex = 0.2) 
 
-
-
-
-plot(st_geometry(land.barrier))
 plot(st_geometry(coastline.clip))
-
-lo
 
 ```
 
@@ -858,9 +816,22 @@ ggsave2(filename="S2.trend.check.by.country.w.integrated.Canadian.dat.wght.only.
 
 ## Plot trend by latitudinal bin
 
-First load EEZs
+### First load EEZs
 
 ```{r, EEZ.defs}
+#------------------------------------------------------------------------
+# Make coastline backdrop
+#------------------------------------------------------------------------
+
+PacificCoast <- ne_countries(scale = 10, returnclass = "sf") 
+PacificCoast.wgs84 <- st_crop(PacificCoast, xmin = -133, xmax = -110, 
+                               ymin = 25, ymax = 55)
+class(PacificCoast)
+
+# Define mapping boundaries
+pacific_bbox <- st_bbox(PacificCoast.wgs84)
+#     xmin ymin xmax ymax
+# [1] -133   27 -111   55
 
 #------------------------------------------------------------------------
 # For EEZ definitions 
@@ -869,97 +840,28 @@ First load EEZs
 ## Exclusive Economic Zone (EEZ) boundaries are filled by region and 
 ## clipped to the study extent (27°N–55°N, 111°W–133°W) without explicit 
 ## boundary lines for cartographic clarity. Displayed spatial extents are for 
-## analytical reference and do not imply official political endorsement or 
+## analytic reference and do not imply official political endorsement or 
 ## territorial adjudication.
 
 # For the U.S.
 # Download US EEZ polygons directly from MarineRegions.org
 us_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'United States' OR sovereign2 = 'United States'")
-us_eez <- us_eez_raw %>% 
+us_eez <- us_eez_raw |>
   # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) %>%
-  # Transform to your custom projection AFTER cropping
-  st_transform(crs = aea_custom) %>% 
+  st_crop(pacific_bbox) |>
   # Clean up any geometry artifacts along the crop edge
   st_make_valid()
 
-# For Canada
-canada_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'")
-canada_eez <- canada_eez_raw %>% 
-  # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) %>%
-  # Transform to your custom projection AFTER cropping
-  st_transform(crs = aea_custom) %>% 
-  # Clean up any geometry artifacts along the crop edge
-  st_make_valid()
+plot(st_geometry(us_eez))
 
-# For Overlapping claims
-contested_cad_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'") %>% 
-  filter(pol_type == "Overlapping claim") 
-dim(contested_cad_raw)
-# [1] 1 32
+us_eez <- us_eez |>
+  filter(geoname == "United States Exclusive Economic Zone")
 
-# For Mexico
-mexico_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Mexico' OR sovereign2 = 'Mexico'")
-mexico_eez <- mexico_eez_raw %>% 
-  # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) %>%
-  # Transform to your custom projection AFTER cropping
-  st_transform(crs = aea_custom) %>% 
-  # Clean up any geometry artifacts along the crop edge
-  st_make_valid()
-
-#------------------------------
-# Check For Overlapping claims
-#------------------------------
-
-## For U.S.
-contested_us_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'United States' OR sovereign2 = 'United States'") %>% 
-  filter(pol_type == "Overlapping claim") %>% 
-  # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) 
-dim(contested_us_raw)
-# [1] 0 32
-
-## For Canada
-contested_cad_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'") %>% 
-  filter(pol_type == "Overlapping claim") %>% 
-  # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) 
-dim(contested_cad_raw)
-# [1] 0 32
-
-## For Mexico
-contested_mex_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Mexico' OR sovereign2 = 'Mexico'") %>% 
-  filter(pol_type == "Overlapping claim") %>% 
-  # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) 
-dim(contested_mex_raw)
-# [1] 0 32
-
-#------------------------------------------------------------------------
-# Put everything together for the polygons
-#------------------------------------------------------------------------
-
-# 1. Extract pure geometries
-geom_us     <- st_geometry(us_eez)
-geom_canada <- st_geometry(canada_eez)
-geom_mexico <- st_geometry(mexico_eez)
-
-# 2. Build individual sf objects
-us_clean     <- st_sf(Region = "Pacific U.S. EEZ", geometry = geom_us)
-canada_clean <- st_sf(Region = "Pacific Canadian EEZ", geometry = geom_canada)
-mexico_clean <- st_sf(Region = "Pacific Mexican EEZ", geometry = geom_mexico)
-
-# 3. Combine all active non-empty regions into one dataset
-eez_zones <- bind_rows(
-  us_clean, 
-  canada_clean, 
-  mexico_clean
-)
-
-# Plot using color fill based on Region
-plot(eez_zones["Region"])
+plot(st_geometry(us_eez))
+eez.lat.limits <- st_bbox(us_eez)
+eez.lat.limits
+#       xmin       ymin       xmax       ymax 
+# -129.23483   30.54200 -117.09162   49.00226
 
 ```
 
@@ -978,7 +880,7 @@ limits <- data.frame(
   ) 
 
 limits.sf <- st_as_sf(limits, coords = c("X", "Y"), crs = 4326) |>
-  st_transform(., crs = aea_custom)
+  st_transform(crs = aea_custom)
 
 # Create northern stock boundary (Westernmost Point, CA)
 nstock <- st_coordinates(limits.sf)[1,2]/1000
@@ -990,8 +892,7 @@ point.concept <- st_coordinates(limits.sf)[2,2]/1000
 # Create upper and lower spatial domain limits
 #------------------------------------------------------
 
-hlines <- eez_zones |>
-  filter(Region == "Pacific U.S. EEZ") |>
+hlines <- us_eez |>
   st_transform(crs = aea_custom) |>
   mutate(
     # Create southern US EEZ boundary
@@ -1268,6 +1169,7 @@ TwoSeas.2008_2019_prep.sf <- TwoSeas.2008_2019.sf |>
     ) |>
   ungroup() 
 
+
 # 2. Build Consolidated Summary Table
 TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf |>
   st_drop_geometry() |>
@@ -1345,6 +1247,86 @@ overall_stats <- TwoSeas.2008_2019survey.dat |>
   )
 
 View(overall_stats)
+
+```
+```{r}
+
+# 1. Prepare Spatial and Temporal Features (with safer date indexing)
+TwoSeas.2008_2019_prep.sf <- TwoSeas.2008_2019.sf |>
+  mutate(
+    date_parsed = as.Date(date),
+    Year = as.numeric(format(date_parsed, "%Y")),
+    Month_abb = format(date_parsed, "%b"),
+    Day = format(date_parsed, "%d"),
+    MonthDay_str = paste0(Month_abb, ". ", Day),
+    MonthDay_idx = lubridate::yday(date_parsed), # Chronological day of year (1-366)
+    CountryLatBin = paste(Country, " - ", latBin)
+  ) |>
+  group_by(Year, CountryLatBin, keys) |> 
+  mutate(
+    minLAT = min(st_coordinates(geometry)[, "Y"]),
+    maxLAT = max(st_coordinates(geometry)[, "Y"])
+  ) |>
+  ungroup()
+
+
+# 2. Build Consolidated Summary Table
+TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf |>
+  st_drop_geometry() |>
+  group_by(Year, CountryLatBin) |>
+  summarise(
+    # Temporal range per bin
+    MonthDay = paste(
+      MonthDay_str[which.min(MonthDay_idx)], 
+      "-", 
+      MonthDay_str[which.max(MonthDay_idx)]
+    ),
+    
+    # Latitudinal range per bin
+    Latitudes = paste0(
+      format(round(min(minLAT, na.rm = TRUE), 2), nsmall = 2), 
+      " - ", 
+      format(round(max(maxLAT, na.rm = TRUE), 2), nsmall = 2)
+    ),
+    
+    # Haul Counts
+    `Total Hauls` = n_distinct(keys),
+    `Nb. Absent Hauls` = n_distinct(keys[scientific_name == "Other" | is.na(len.bin)]),
+    
+    # Total Catch Weight: Filter valid target rows first, then take 1 weight per distinct key
+    `Total Catch (kg)` = {
+      valid_target <- scientific_name != "Other" & !is.na(len.bin)
+      target_keys <- keys[valid_target]
+      target_weights <- Species_weight[valid_target]
+      sum(target_weights[!duplicated(target_keys)], na.rm = TRUE)
+    },
+    
+    # Fish Sampled Count: Sum ALL length bin counts for target species (do NOT deduplicate keys)
+    `n sampled` = sum(
+      lenBin.nb[scientific_name != "Other" & !is.na(len.bin)], 
+      na.rm = TRUE
+    ),
+    
+    # Length Bins
+    `Length Bins (cm)` = {
+      clean_bins <- len.bin[scientific_name != "Other" & !is.na(len.bin) & trimws(len.bin) != ""]
+      
+      if (length(clean_bins) == 0) {
+        "None"
+      } else {
+        bin_order <- c("<15.0", "15.0-20.0", "20.0+")
+        ordered_bins <- sort(factor(unique(clean_bins), levels = bin_order))
+        paste(ordered_bins, collapse = " & ")
+      }
+    },
+    .groups = "drop"
+  ) |>
+  select(
+    Year, MonthDay, `Country - Strata` = CountryLatBin, `Total Hauls`, `Nb. Absent Hauls`,
+    `Total Catch (kg)`, `Length Bins (cm)`, `n sampled`, Latitudes
+  )
+
+View(TwoSeas.2008_2019survey.dat)
 
 ```
 
