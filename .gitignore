@@ -11,18 +11,18 @@ shared/
 #--------------------------------------
 # Remove in-house assessment of indices
 #--------------------------------------
-AcousticIndex.vs.sdmTMBIndex.Rmd
-oldIPES.and.Canadian.Data.V3.Rmd
+AcousticIndex.vs.sdmTMBIndex.Rmd #(might be lost since it was on the corrupt drive)
+oldIPES.and.Canadian.Data.V3.Rmd #(might be lost since it was on the corrupt drive)
 
 #--------------------------------------
 #  Remove data Old data and functions
 #--------------------------------------
-Data/ATM CPS Survey/Scratch/
+Data/ATM CPS Survey/Scratch/ 
 Data/Shapefiles/Scratch/
 Data/
-dropped.functions.R
-dropped.code.and.data.calls.R
-file.comparision.R
+dropped.functions.R #(original code backuped to other drive) 
+dropped.code.and.data.calls.R #(original code backuped to other drive) 
+file.comparision.R #(might be lost since it was on the corrupt drive)
 
 #--------------------------------------
 # File is too large (EEZ boundary)
@@ -66,11 +66,11 @@ bfg-1.15.0.jar
 #--------------------------------------
 # Notes, Presentations, and Test code
 #--------------------------------------
-Scratch/
-Final.Figures/Scratch/
-Final.Results/Scratch/
-Final.Model.Scripts/Scratch/
-PastPresentations/
+Scratch/ #(might be lost since it was on the corrupt drive)
+Final.Figures/Scratch/ #(might be lost since it was on the corrupt drive)
+Final.Results/Scratch/ #(might be lost since it was on the corrupt drive)
+Final.Model.Scripts/Scratch/ #(might be lost since it was on the corrupt drive)
+PastPresentations/ 
 Notes/
 *.pptx
 *.odp
