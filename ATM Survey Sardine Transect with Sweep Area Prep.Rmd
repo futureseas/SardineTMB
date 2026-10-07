@@ -30,9 +30,33 @@ dir <- here(getwd())
 # Since the data falls within two UTM zones and there is not an ideal projection to use, apply a custom equal area # albers projection
 aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
 
-Figure.path <- "Final.Figures"
-
 source(here(dir,"functions.R"))
+
+```
+
+# Create data folder if not already made
+
+```{r, create data directory}
+
+
+survey.path <- "Data/ATM CPS Survey"
+
+if (!dir.exists(survey.path)) {
+  dir.create(survey.path, recursive = TRUE)
+}
+
+```
+
+# Create data folder if not already made
+
+```{r, create data directory}
+
+
+figure.path <- "Final.Figures"
+
+if (!dir.exists(figure.path)) {
+  dir.create(figure.path)
+}
 
 ```
 
@@ -44,7 +68,7 @@ Remember to convert length to cm to be able to use VBGF!
 
 full.series <- 
   fread(
-    here(dir, "Data", "ATM CPS Survey",
+    here(dir, survey.path,
          "2003.2024.ATM.Survey.with.integrated.specimen.data.csv"), 
         sep = ",") |>
   # convert mm to cm to be able to use VBGF
@@ -166,7 +190,7 @@ season.weight.raw.Spring <- season.len.weight.raw |>
   ungroup()
 
 fwrite(season.weight.raw.Spring, 
-       here(dir, "Data", "ATM CPS Survey", 
+       here(dir, survey.path, 
             "season.weight.raw.Spring.csv"), 
        sep = ",")
 
@@ -182,7 +206,7 @@ season.weight.raw.Summer <- season.len.weight.raw |>
   ungroup()
 
 fwrite(season.weight.raw.Summer, 
-       here(dir, "Data", "ATM CPS Survey", 
+       here(dir, survey.path, 
             "season.weight.raw.Summer.csv"), 
        sep = ",")
 
@@ -369,7 +393,7 @@ biomass_audit.minus.2007 <-
 # View(biomass_audit.minus.2007)
 
 fwrite(biomass_audit.minus.2007,
-       here(dir, "Data", "ATM CPS Survey",
+       here(dir, survey.path,
             "CPS.ATM.Survey.Biomass.audit.minus.2007.csv"), 
        sep = ",")
 
@@ -388,13 +412,13 @@ top_influence_hauls <-
 # View(top_influence_hauls)
 
 fwrite(top_influence_hauls,
-       here(dir, "Data", "ATM CPS Survey",
+       here(dir, survey.path,
             "CPS.ATM.Survey.top_influence_hauls.minus.2007.csv"), 
        sep = ",")
 
 # Load match summary 
 Hauls2Fill.clean_sf.f.summary <-
-  fread(here(dir, "Data", "ATM CPS Survey",
+  fread(here(dir, survey.path,
        "ATM.Survey.estimated.specimen.weight-lenComps.csv")
   )
 
@@ -425,7 +449,7 @@ unique(test.total.bios$TotalBioDiff)
 
 # Isolate hauls where length weight were estimated
 borrowed.us.haul.comps <- fread(
-  here(dir, "Data", "ATM CPS Survey",
+  here(dir, survey.path,
        "ATM.Survey.estimated.specimen.weight-lenComps.csv"), 
   sep = ",")
 
@@ -449,8 +473,8 @@ Hybrid.reweighting.w.correction
 ggsave2(
   filename="Hybrid.reweighting.w.correction.plot.USA.jpeg",
   plot=Hybrid.reweighting.w.correction, device="jpeg", 
-  path=here(dir, "/Final.Figures", "Test.Length.Comps.Methods"),
-  dpi=1200, width = 29, height=21, unit="cm", limitsize = FALSE)
+  path=here(dir, figure.path), dpi=1200, width = 29, 
+            height=21, unit="cm", limitsize = FALSE)
 
 #---------------------------------------------------------------
 # Fifth, create plot showing the the expansion weight per length
@@ -482,8 +506,7 @@ scaled.reweighting.w.correction
 
 ggsave2(filename="expansion_biomass_per.haul.plot.USA.jpeg",
         plot=scaled.reweighting.w.correction, device="jpeg", 
-        path=here(dir, "/Final.Figures",
-                  "Test.Length.Comps.Methods"),
+        path=here(dir, figure.path),
         dpi=1200, width = 29, height=21,  
         unit="cm", limitsize = FALSE)
 
@@ -587,7 +610,7 @@ PreAbs <- rbind(Sardine.present, Absent) |>
 unique(is.na(PreAbs))
 
 fwrite(PreAbs |> st_drop_geometry(), 
-       here(dir, "Data", "ATM CPS Survey",
+       here(dir, survey.path,
             "CPS.ATM.Survey.final.dat.csv"), sep = ";")
 
 ```
@@ -672,7 +695,7 @@ dim(sun_times)
 # Add sun_times to original data set
 area.transects <- inner_join(PreAbs2, sun_times, 
                              join_by("date", "lat", "lon")) |>
-  st_transform(., crs = aea_custom)
+  st_transform(crs = aea_custom)
 # View(area.transects)  
 
 dim(area.transects)
@@ -723,7 +746,7 @@ dim(area.transects.final)
 # View(area.transects.final)
 
 fwrite(area.transects.final |> st_drop_geometry(), 
-       here(dir, "Data", "area.transects.pre-step.shp"),
+       here(dir, "Data", "area.transects.pre-step.csv"),
        sep = ",")
 
 ```
@@ -801,7 +824,7 @@ dim(area.transects.final)
 # View(area.transects.final)
   
 fwrite(area.transects.final |> st_drop_geometry(), 
-       here(dir, "Data", "area.transects.pre-step.shp"),
+       here(dir, "Data", "area.transects.pre-step.csv"),
        sep = ",")
 
 area.transects.final <- area.transects.final |>
@@ -963,7 +986,7 @@ area.transects.final.2003.2005 <-
 
 fwrite(
   area.transects.final.2003.2005, 
-  here(dir, "Data", "Shapefiles", "area.transects.final.2003.2005.csv"), 
+  here(dir, survey.path, "area.transects.final.2003.2005.csv"), 
   sep = ",")
 
 # View(area.transects.final.2003.2005)
@@ -1139,7 +1162,7 @@ area.transects.final.2006.2010 <-
 
 fwrite(
   area.transects.final.2006.2010, 
-  here(dir, "Data", "Shapefiles", "area.transects.final.2006.2010.csv"),
+  here(dir, survey.path, "area.transects.final.2006.2010.csv"),
   sep = ",")
 
 test.range2 <- area.transects.final.2006.2010 |>
@@ -1349,7 +1372,7 @@ area.transects.final.2011.2014 <-
 
 fwrite(
   area.transects.final.2011.2014, 
-  here(dir, "Data", "Shapefiles", "area.transects.final.2011.2014.csv"),
+  here(dir, survey.path, "area.transects.final.2011.2014.csv"),
   sep = ",")
 
 test.range3 <- area.transects.final.2011.2014 |>
@@ -1571,7 +1594,7 @@ area.transects.final.2015.2020 <-
 fwrite(
   area.transects.final.2015.2020, 
   here(
-    dir, "Data", "Shapefiles", "area.transects.final.2015.2020.csv"), 
+    dir, "Data", "ATM CPS Survey", "area.transects.final.2015.2020.csv"), 
   sep = ",")
 
 test.range4 <- area.transects.final.2015.2020 |>
@@ -1791,7 +1814,7 @@ area.transects.final.2021.2023 <-
 fwrite(
   area.transects.final.2021.2023, 
   here(
-      dir, "Data", "Shapefiles", "area.transects.final.2021.2023.csv"), 
+      dir, "Data", "ATM CPS Survey", "area.transects.final.2021.2023.csv"), 
   sep = ",")
 
 test.range5 <- area.transects.final.2021.2023 |>
@@ -1928,7 +1951,7 @@ area.transects.final.2024.2025 <-
 fwrite(
   area.transects.final.2024.2025, 
   here(
-      dir, "Data", "Shapefiles", "area.transects.final.2024.2025.csv"), 
+      dir, "Data", "ATM CPS Survey", "area.transects.final.2024.2025.csv"), 
   sep = ",")
 
 test.range5 <- area.transects.final.2024.2025 |>

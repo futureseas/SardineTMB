@@ -37,12 +37,24 @@ aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS8
 
 ```
 
+# Create data folder if not already made
+
+```{r, create data directory}
+
+survey.path <- "Data/ATM CPS Survey"
+
+if (!dir.exists(survey.path)) {
+  dir.create(survey.path, recursive = TRUE)
+}
+
+```
+
 # Load the cleaned data
 
 ```{r, load.clean.us.data}
 
 US.specimen.dat.clean <- fread(
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
             "2003.2024.ATM.Survey.with.specimen.data.csv"), 
        sep = ",")
 
@@ -73,7 +85,7 @@ length(unique(test2$keys))
 # Load data without specimen data
 #-------------------------------------
 no.specimen.dat <- fread(
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "ATM.Survey.no.corresponding.specimen.table.entry.csv"),
        sep = ",")
 
@@ -108,7 +120,7 @@ no.specimen.dat <- no.specimen.dat |>
 # Load data without individual lengths
 #-------------------------------------
 Haul.weights.sar.no.length <- fread(
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "ATM.Survey.no.length.table.entry.csv"),
        sep = ",") 
 
@@ -432,7 +444,7 @@ Hauls2Fill.clean_sf.f.summary <- final_expanded_specimens |>
 
 fwrite(
   Hauls2Fill.clean_sf.f.summary, 
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "ATM.Survey.estimated.specimen.weight-lenComps.csv"), 
   sep = ",")
 
@@ -507,7 +519,7 @@ allDat <- allDat |>
 
 fwrite(
   allDat,
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "2003.2024.ATM.Survey.with.integrated.specimen.data.csv"), 
        sep = ",")
 
@@ -517,7 +529,7 @@ fwrite(
 
 ```{r, spring.summer.unqiue.months}
 
-check.month <- fread(here(dir, "Data", survey.path, "2003.2024.ATM.Survey.with.integrated.specimen.data.csv"), sep = ",")
+check.month <- fread(here(dir, survey.path, "2003.2024.ATM.Survey.with.integrated.specimen.data.csv"), sep = ",")
 sort(unique(check.month$Month))
 # [1] 3 4 5 6 7 8 9 10 11
 

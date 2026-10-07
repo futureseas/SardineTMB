@@ -22,7 +22,18 @@ sapply(load.lib,require,character=TRUE)
 
 dir <- here(getwd())
 
-survey.path <- "ATM CPS Survey"
+```
+
+# Create data folder if not already made
+
+```{r, create data directory}
+
+
+survey.path <- "Data/ATM CPS Survey"
+
+if (!dir.exists(survey.path)) {
+  dir.create(survey.path, recursive = TRUE)
+}
 
 ```
 
@@ -331,7 +342,7 @@ dim(no.specimen.dat)
 
 fwrite(
   no.specimen.dat, 
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "ATM.Survey.no.corresponding.specimen.table.entry.csv"),
        sep = ",") 
 
@@ -383,7 +394,7 @@ dim(sardine.w.subsample.weights)
 #-------------------------------
 fwrite(
   no.sardine.subsample.weights, 
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "ATM.Survey.no.subsample_weight.table.entry.csv"),
        sep = ",") 
 
@@ -591,7 +602,7 @@ dim(Haul.weights.sar.no.length)
 # [1] 8  28
 
 fwrite(Haul.weights.sar.no.length, 
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "ATM.Survey.no.length.table.entry.csv"),
        sep = ",") 
 
@@ -721,7 +732,7 @@ dim(extra.specimens)
 
 length(unique(extra.specimens$keys))
 
-fwrite(extra.specimens, here(dir, "Data", survey.path,
+fwrite(extra.specimens, here(dir, survey.path,
                   "ATM.Survey.extra.sample.observation.csv"),
        sep = ",")
 
@@ -1026,7 +1037,7 @@ dim(US.specimen.dat.clean)
 # [1] 21105  26
 
 fwrite(US.specimen.dat.clean, 
-       here(dir, "Data", survey.path,
+       here(dir, survey.path,
             "2003.2024.ATM.Survey.with.specimen.data.csv"), 
        sep = ",")
 
