@@ -22,13 +22,36 @@ sapply(load.lib,require,character=TRUE)
 
 dir <- here(getwd())
 
-# Where you will have your data stored from the DFO or personal request
-survey.path <- "IPES plus Historic Surveys Canada"
-
 # Since the data falls within two UTM zones and there is not an ideal projection to use, apply a custom equal area # albers projection
 aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
 
 source(here(dir,"functions.R"))
+
+```
+
+# Create data folder if not already made
+
+```{r, create data directory}
+
+
+survey.path <- "Data/IPES plus Historic Surveys Canada"
+
+if (!dir.exists(survey.path)) {
+  dir.create(survey.path, recursive = TRUE)
+}
+
+```
+
+# Create data folder if not already made
+
+```{r, create data directory}
+
+
+figure.path <- "Final.Figures"
+
+if (!dir.exists(figure.path)) {
+  dir.create(figure.path)
+}
 
 ```
 
@@ -42,7 +65,7 @@ This will give you an idea of the file structure and what can be used on and wha
 
 # Load haul information
 bridge.dat1999.2014 <- read_excel(
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        # Replace with your file name
        "SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx"),
   sheet = "BRIDGE_LOG")
@@ -100,7 +123,7 @@ This will give you an idea of the file structure and what can be used on and wha
 
 # Load sample information
 Catch.dat1999.2014  <- read_excel(
-  here(dir,"Data", survey.path,
+  here(dir,survey.path,
        # Replace with your file name
        "SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx"),
   sheet = "SARDINE_CATCH")
@@ -338,8 +361,7 @@ save.high.speeds <- save.high.speeds |>
             PFMA_SUB_AREA_NUMBER.y, COMMENTS.y, FID))
 
 # Save output for high speeds to send to Jennifer Boldt 
-fwrite(save.high.speeds, here(dir, "Data", 
-                      "IPES plus Historic Surveys Canada", 
+fwrite(save.high.speeds, here(dir, survey.path, 
                       "Speeds.to.check.csv"),
                  sep = ";")
 
@@ -398,8 +420,7 @@ save.high.ratios <- comb.dat1999.2014.sf2 |>
 
 
 # Save output and forward to Jennifer Boldt
-fwrite(save.high.ratios, here(dir, "Data", 
-                      "IPES plus Historic Surveys Canada", 
+fwrite(save.high.ratios, here(dir, survey.path, 
                       "Warp.ratio.check.csv"),
                  sep = ";")
 
@@ -501,8 +522,7 @@ gear_dim_outlier <- comb.dat1999.2014.sf2 |>
             PFMA_SUB_AREA_NUMBER.y, COMMENTS.y, FID))
 
 # Save output for high speeds to send to Jennifer Boldt 
-fwrite(gear_dim_outlier, here(dir, "Data", 
-                      "IPES plus Historic Surveys Canada", 
+fwrite(gear_dim_outlier, here(dir, survey.path, 
                       "gear.opening.to.check.csv"),
                  sep = ";")
 
@@ -556,7 +576,7 @@ unique(comb.dat1999.2014.sf2$sciname)
 
 # Load specimen data
 Catch.dat1999.2014.specimen <- read_excel(
-  here(dir,"Data", survey.path,
+  here(dir,survey.path,
        # Rename with your data information
        "SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx"),
   sheet = "SardineSpecimen", 
@@ -832,7 +852,7 @@ knownDat_xy <- st_geometry(knownDat_sf)
 ## Spatial distance matrix (Euclidean in meters)
 dist_matrix <- st_distance(Hauls2Fill.clean_xy, knownDat_xy)
 dim(dist_matrix)
-# [1] 99 14293
+# [1] 20 3547
 
 # Remove the units (in metres)
 dist_matrix.no.units <- drop_units(dist_matrix)
@@ -935,7 +955,7 @@ final_df1999_2014 <- st_drop_geometry(Hauls2Fill.clean_sf1999_2014)
 
 ```
 
-## Join lenth comps based on closest values
+## Join length comps based on closest values
 
 ```{r, assign.closes.lenComps}
 
@@ -985,7 +1005,7 @@ Hauls2Fill.clean_sf.f.summary1999_2014 <-
 
 fwrite(
   Hauls2Fill.clean_sf.f.summary1999_2014, 
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "Canadian.surveys.estimated.specimen.weight-lenComps_1999-2014.csv"), 
   sep = ",")
 
@@ -1058,7 +1078,7 @@ allDat1999_2014 <- allDat1999_2014 |>
 
 fwrite(
   allDat1999_2014,
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "Candian.surveys.with.integrated.specimen.data_1999-2014.csv"), 
        sep = ",")
 
@@ -1277,7 +1297,7 @@ final_production_data1999.2014 <-
 # the recorded total species weight
 sum(final_production_data1999.2014$Scaled_Biomass_Contribution) -
   sum(unique(final_production_data1999.2014$CATCH_WEIGHT))
-# [1] 15938.47
+# [1] 15907.98
 
 #-----------------------------
 
@@ -1361,7 +1381,7 @@ print(biomass_audit_1999.2014)
 
 ## Artifact is where a length observation was imputed, where the total catch was reported 0 and will need to be dropped before analyses are run.
 fwrite(biomass_audit_1999.2014,
-       here(dir, "Data", "IPES plus Historic Surveys Canada",
+       here(dir, survey.path,
             "Canadian.Survey.Biomass.audit.1999-2014.csv"), 
        sep = ",")
 
@@ -1380,7 +1400,7 @@ top_influence_hauls_1999.2014 <-
 # View(top_influence_hauls_1999.2014)
 
 fwrite(top_influence_hauls_1999.2014,
-       here(dir, "Data", "IPES plus Historic Surveys Canada",
+       here(dir, survey.path,
             "Canadian.Survey.top_influence_hauls.1999.2014.csv"), 
        sep = ",")
 
@@ -1423,7 +1443,7 @@ ggsave2(
    filename=
      "Hybrid.reweighting.w.correction.plot.1999.2014.Canada.jpeg",
    plot=Hybrid.reweighting.w.correction1999.2014, device="jpeg", 
-   path=here(dir, "Final.Figures", "Test.Length.Comps.Methods"),
+   path=here(dir, figure.path),
    dpi=1200, width = 29, height=21, unit="cm", limitsize = FALSE)
 
 #---------------------------------------------------------------
@@ -1457,8 +1477,7 @@ scaled.reweighting.w.correction1999.2014
 ggsave2(
   filename="expansion_biomass_per.haul.plot.1999.2014.Canada.jpeg",
   plot=scaled.reweighting.w.correction1999.2014, device="jpeg", 
-  path=here(dir, "Final.Figures",
-            "Test.Length.Comps.Methods"),
+  path=here(dir, figure.path),
   dpi=1200, width = 29, height=21,  
   unit="cm", limitsize = FALSE)
 
@@ -1474,7 +1493,7 @@ This will give you an idea of the file structure and what can be used on and wha
 
 # Load haul information
 bridge.dat2017.2024 <- read_excel(
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "IPES_SardineData_ToStephanieHopkins_V2.xlsx"),
   sheet = "Bridge")
 
@@ -1522,7 +1541,7 @@ This will give you an idea of the file structure and what can be used on and wha
 
 # Load sample information
 Catch.dat2017.2024 <- read_excel(
-  here(dir, "Data", survey.path,
+  here(dir, survey.path,
        "IPES_SardineData_ToStephanieHopkins_V2.xlsx"),
   sheet = "SardineCatch")
 
@@ -1629,7 +1648,7 @@ dim(comb.dat2017.2024.sf)
 
 # Load specimen data
 Catch.dat2017.2024.specimen <- read_excel(
-  here(dir,"Data", survey.path,
+  here(dir,survey.path,
        "IPES_SardineData_ToStephanieHopkins_V2.xlsx"),
   sheet = "Specimen")
 
@@ -2008,7 +2027,7 @@ ggsave2(
    filename=
      "Hybrid.reweighting.w.correction.plot.2017.2024.Canada.jpeg",
    plot=Hybrid.reweighting.w.correction2017.2024, device="jpeg", 
-   path=here(dir, "Final.Figures", "Test.Length.Comps.Methods"),
+   path=here(dir, figure.path),
    dpi=1200, width = 29, height=21, unit="cm", limitsize = FALSE)
 
 #---------------------------------------------------------------
@@ -2045,8 +2064,7 @@ scaled.reweighting.w.correction2017.2024
 ggsave2(
   filename="expansion_biomass_per.haul.plot.2017.2024.Canada.jpeg",
   plot=scaled.reweighting.w.correction2017.2024, device="jpeg", 
-  path=here(dir, "Final.Figures",
-            "Test.Length.Comps.Methods"),
+  path=here(dir, figure.path),
   dpi=1200, width = 29, height=21,  
   unit="cm", limitsize = FALSE)
 
@@ -2356,7 +2374,7 @@ ggsave2(filename =
           "Canadian.IPES.2001to2005_2011and2013.annual.gear.opening.jpeg",
         plot = gear.op.2001to2005_2011and2013, 
         device ="jpeg",
-        path = here(dir, "Final.Figures"),
+        path = here(dir, figure.path),
         dpi = 1200, width = 29, height = 21,
         unit = "cm", limitsize = FALSE)
 
@@ -2416,7 +2434,7 @@ original.gear.op
 ggsave2(filename = "Canadian.IPES.original.annual.gear.opening.jpeg",
         plot = original.gear.op, 
         device ="jpeg",
-        path = here(dir, "Final.Figures"),
+        path = here(dir, figure.path),
         dpi = 1200, width = 29, height = 21,
         unit = "cm", limitsize = FALSE)
 
@@ -2439,7 +2457,7 @@ mean.gear.op
 ggsave2(filename = "Canadian.IPES.mean.annual.gear.opening.jpeg",
         plot = mean.gear.op, 
         device ="jpeg",
-        path = here(dir, "Final.Figures"),
+        path = here(dir, figure.path),
         dpi = 1200, width = 29, height = 21,
         unit = "cm", limitsize = FALSE)
 
@@ -2462,7 +2480,7 @@ compare.gear.op
 ggsave2(filename = "Canadian.IPES.mean.annual.gear.opening.compare.jpeg",
         plot = compare.gear.op, 
         device ="jpeg",
-        path = here(dir, "Final.Figures"),
+        path = here(dir, figure.path),
         dpi = 1200, width = 29, height = 21,
         unit = "cm", limitsize = FALSE)
 
@@ -2515,7 +2533,7 @@ unique(is.na(CanadianDat))
 
 # Load pre-step data
 usdat <- fread(
-  here(dir,"Data", "Shapefiles",
+  here(dir, "Data", "ATM CPS Survey",
        "area.transects.final.2006.2010.csv"), sep = ",")
 
 # Check for mismatch column names
@@ -2598,7 +2616,7 @@ CanadianDat.new.short <- CanadianDat.new |>
 
 # Save output and close
 fwrite(CanadianDat.new.short, 
-         here(dir, "Data", "Shapefiles","Canadian.set.1999.2024.csv"),
+         here(dir, survey.path,"Canadian.set.1999.2024.csv"),
        sep = ","
        )
 

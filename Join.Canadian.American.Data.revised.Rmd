@@ -59,8 +59,8 @@ source(here(dir, "functions.R"))
 #----------------------------------------------------
 
 us.dat.2003.2005 <- 
-   read_sf(here(dir, "Data", "ATM CPS Survey",
-                "area.transects.final.2003.2005.csv"))
+   fread(here(dir, "Data", "ATM CPS Survey",
+              "area.transects.final.2003.2005.csv"))
 # View(us.dat.2003.2005)
 dim(us.dat.2003.2005)
 # [1] 3910   58
@@ -68,8 +68,8 @@ dim(distinct(us.dat.2003.2005))
 # [1] 3910   58
 
 us.dat.2006.2010 <- 
-   read_sf(here(dir, "Data", "ATM CPS Survey",
-                "area.transects.final.2006.2010.csv"))
+   fread(here(dir, "Data", "ATM CPS Survey",
+              "area.transects.final.2006.2010.csv"))
 #  (us.dat.2006.2010)
 
 us.dat.2011.2014 <- 
@@ -82,8 +82,8 @@ dim(distinct(us.dat.2011.2014))
 # [1] 3826   58
 
 us.dat.2015.2020 <- 
-   read_sf(here(dir, "Data", "ATM CPS Survey",
-                "area.transects.final.2015.2020.csv"))
+   fread(here(dir, "Data", "ATM CPS Survey",
+              "area.transects.final.2015.2020.csv"))
 # View(us.dat.2015.2020)
 dim(us.dat.2015.2020)
 # [1] 6201   58
@@ -91,13 +91,13 @@ dim(distinct(us.dat.2015.2020))
 # [1] 6201   58
 
 us.dat.2021.2023 <- 
-   read_sf(here(dir, "Data", "ATM CPS Survey",
-                "area.transects.final.2021.2023.csv"))
+   fread(here(dir, "Data", "ATM CPS Survey",
+              "area.transects.final.2021.2023.csv"))
 # View(us.dat.2021.2023)
 
 us.dat.2024.2025 <- 
-   read_sf(here(dir, "Data", "ATM CPS Survey",
-                "area.transects.final.2024.2025.csv"))
+   fread(here(dir, "Data", "ATM CPS Survey",
+              "area.transects.final.2024.2025.csv"))
 # View(us.dat.2024.2025)
 dim(us.dat.2024.2025)
 # [1] 1070   58
@@ -204,7 +204,7 @@ dim(full.us.dat.short.test2)
 
 canadian.dat <- 
   fread(here(dir, "Data",
-             "Shapefiles","Canadian.set.1999.2024.csv"),
+             "IPES plus Historic Surveys Canada","Canadian.set.1999.2024.csv"),
         sep = ","
         ) |>
   # Create country label
