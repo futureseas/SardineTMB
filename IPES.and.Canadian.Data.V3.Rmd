@@ -670,7 +670,7 @@ sardine.obs <- final.comb.dat1999.2014 |>
    filter(sciname == "Sardinops sagax")
 
 length(unique(sardine.obs$keys))
-# [1]
+# [1] 359
 
 
 # Find the number of hauls where there are not length obs.
@@ -678,8 +678,7 @@ sardine.len.is.na <- sardine.obs |>
   filter(is.na(standard_length))
 
 length(unique(sardine.len.is.na$keys))
-# [1]
-
+# [1] 99
 
 ```
 
@@ -688,6 +687,7 @@ length(unique(sardine.len.is.na$keys))
 ```{r, Check.sample.counts.us.survey.match}
 
 filtered.sardine.obs <- final.comb.dat1999.2014 |> 
+  filter(sciname == "Sardinops sagax") |>
   filter(Year > 2007 & !Year %in% c(2009:2011))
 
 length(unique(filtered.sardine.obs$keys))
@@ -695,12 +695,6 @@ length(unique(filtered.sardine.obs$keys))
 
 sort(unique(filtered.sardine.obs$Year))
 # [1] 2008 2012
-
-length(unique(filtered.sardine.obs$keys))
-# [1] 86
-
-length(unique(filtered.sardine.obs$keys))/length(unique(filtered.sardine.obs$keys))*100
-# [1] 30.93525
 
 # Find the number of hauls where there are not weight obs.
 filtered.sardine.wght.is.na <- filtered.sardine.obs |>
@@ -719,7 +713,7 @@ filtered.sardine.len.is.na <- filtered.sardine.obs |>
   filter(is.na(standard_length))
 
 length(unique(filtered.sardine.len.is.na$keys))
-# [1] 20
+# [1] 20  
 
 # Find the number of hauls where there are not weight & length obs.
 filtered.sardine.wght.len.is.na <- filtered.sardine.obs |>
@@ -1086,7 +1080,7 @@ dim(test.na.length)
 # [1] 0 51
 
 dim(allDat1999_2014)
-# [1] 42760 51
+# [1] 49744 51
 
 
 allDat1999_2014 <- allDat1999_2014 |>
@@ -1194,11 +1188,11 @@ result <- compare.bin.comps |>
 
 # How many hauls overall
 length(unique(compare.bin.comps$UNIQUE_EVENT))
-# [1] 283
+# [1] 359
 
 # How many hauls had more than 1 length bin
 length(unique(result$UNIQUE_EVENT))
-# [1] 159
+# [1] 178
 
 result <- result |>
   group_by(UNIQUE_EVENT) |>
@@ -1211,7 +1205,7 @@ result <- result |>
 partial.vals <- result |>
   filter(obs.real > 0)
 length(unique(partial.vals$UNIQUE_EVENT))
-# [1] 133
+# [1] 152
 
 # How many hauls have no weight values
 no.vals <- result |>
@@ -1315,7 +1309,7 @@ final_production_data1999.2014 <-
 # the recorded total species weight
 sum(final_production_data1999.2014$Scaled_Biomass_Contribution) -
   sum(unique(final_production_data1999.2014$CATCH_WEIGHT))
-# [1] 15907.98
+# [1] 15938.47
 
 #-----------------------------
 
@@ -1344,7 +1338,7 @@ dim(error_report_1999.2014)
 # not representative of the haul
 summary(final_production_data1999.2014$Expansion_Factor)
 #  Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-# 0.000   3.729  14.841  33.344  38.314 774.209
+# 0.000   1.799  10.187  28.897  32.395 774.209 
 
 # What the Summary tells us:
 
@@ -1352,11 +1346,11 @@ summary(final_production_data1999.2014$Expansion_Factor)
 
 ## Min (0.00): Some "subsamples" were actually heavier than the recorded species weight (likely a data entry error or a "dirty" weight including debris), effectively scaling the fish down.
 
-## Median (14.841): This is still very healthy. It means for half the data, about 1/15th (approx. 6.7%) of the catch was sampled. 
+## Median (10.187): This is still very healthy. It means for half the data, about 1/10th (approx. 10%) of the catch was sampled. 
 
-## The 3rd Quartile (38.314): At the 75th percentile, the expansion factor is 38.314. This means that for 75% of the data, at least 1/38rd of the total catch (2.6%) was sampled.
+## The 3rd Quartile (32.395): At the 75th percentile, the expansion factor is 32.395. This means that for 75% of the data, at least 1/32rd of the total catch (3.1%) was sampled.
 
-## Mean (33.344): Average expansion is roughly 33x, influenced by the tail of larger hauls.
+## Mean (28.897): Average expansion is roughly 29x, influenced by the tail of larger hauls.
 
 #-----------------------------
 # Check if expansion factors larger than 500 are common
@@ -1386,18 +1380,18 @@ print(biomass_audit_1999.2014)
  # A tibble: 4 × 4
 #   Expansion_Bin  Record_Count Total_Biomass_Represented Percent_of_Total_Biomass
 #   <fct>                 <int>                     <dbl>                    <dbl>
-# 1 01-10 (High)          17796                    10657.                     4.78
-# 2 10-100 (Med)          21591                   119268.                    53.4 
-# 3 100-1000 (Low)         3313                    93234.                    41.8 
-# 4 Artifact                 60                        0                      0  
+# 1 01-10 (High)          24261                    10990.                     4.88
+# 2 10-100 (Med)          21663                   120293.                    53.4 
+# 3 100-1000 (Low)         3348                    93901.                    41.7 
+# 4 Artifact                472                        0                      0   
 
-## High (1-10) - 4.78% of biomass -	These are the "anchor" hauls where they measured almost everything. Very high precision.
+## High (1-10) - 4.88% of biomass -	These are the "anchor" hauls where they measured almost everything. Very high precision.
 
 # Med (10-100) - 53.4% of biomass -	Here they measured 1%–10% of a haul, which is the industry standard for robust sampling. The fact that the majority of the biomass sits here is excellent.
 
-# Low (100-1000) - 41.8% of biomass -	These are "big hauls." They caught caught a lot of fish but could only sample a small fraction. This is common, but it's where the uncertainty lives.
+# Low (100-1000) - 41.7% of biomass -	These are "big hauls." They caught caught a lot of fish but could only sample a small fraction. This is common, but it's where the uncertainty lives.
 
-## Artifact is where a length observation was imputed, where the total catch was reported 0 and will need to be dropped before analyses are run.
+## Artefact is where a length observation was imputed, where the total catch was reported 0 and will need to be dropped before analyses are run.
 fwrite(biomass_audit_1999.2014,
        here(dir, survey.path,
             "Canadian.Survey.Biomass.audit.1999-2014.csv"), 
@@ -2279,7 +2273,7 @@ PreAbs2 <- all.dat |>
             BEGIN_RETRIEVAL_TIME, END_RETRIEVAL_TIME))
 
 dim(PreAbs2)
-# [1] 44071 34
+# [1] 51055 34
 
 # View(PreAbs2)
 
@@ -2416,10 +2410,10 @@ test.year.op <- area.transects.final.sf4 |>
 unique(is.na(test.year.op))
 
 dim(area.transects.final.sf4)
-# [1] 43800 38
+# [1] 50784 38
 
 dim(test.year.op)
-# [1] 43800 43
+# [1] 50784 43
 
 # Check difference between reported and averaged gear opening
 test.gear.opav <- tibble(Year = test.year.op$Year,
