@@ -3119,8 +3119,6 @@ sort(unique(test2017$Month))
 # [1] 7 8
 mean(test2017$area.op.m2, na.rm = T)
 # [1] 456.5391
-unique(is.na(test2017$MOUTH_OPENING_HEIGHT))
-# [1] FALSE 
 unique(is.na(test2017$start_latitude))
 # [1] FALSE
 min(test2017$start_latitude, na.rm = T)
@@ -3142,8 +3140,6 @@ test2018 <- comb.dat2017.2024.sf |>
   filter(Year == 2018)
 sort(unique(test2018$Month))
 # [1] 7
-mean(test2018$TOW_DURATION, na.rm = T)
-# [1] 20.40678
 mean(test2018$area.op.m2, na.rm = T)
 # [1] 605.5128
 unique(is.na(test2018$start_latitude))
