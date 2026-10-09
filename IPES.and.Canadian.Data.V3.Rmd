@@ -665,16 +665,33 @@ final.comb.dat1999.2014 <- final.comb.dat1999.2014.stnd |>
 dim(final.comb.dat1999.2014)
 # [1] 42155  52
 
-filtered.sardine.obs.test <- final.comb.dat1999.2014 |> 
+# Subset the date to include hauls only where sardines are present
+sardine.obs <- final.comb.dat1999.2014 |> 
+   filter(sciname == "Sardinops sagax")
+
+length(unique(sardine.obs$keys))
+# [1]
+
+
+# Find the number of hauls where there are not length obs.
+sardine.len.is.na <- sardine.obs |>
+  filter(is.na(standard_length))
+
+length(unique(sardine.len.is.na$keys))
+# [1]
+
+
+```
+
+### For current work subset the data to match U.S. surveys
+
+```{r, Check.sample.counts.us.survey.match}
+
+filtered.sardine.obs <- final.comb.dat1999.2014 |> 
   filter(Year > 2007 & !Year %in% c(2009:2011))
 
-length(unique(filtered.sardine.obs.test$keys))
+length(unique(filtered.sardine.obs$keys))
 # [1] 278
-
-# Subset the date to include hauls only where sardines are present
-filtered.sardine.obs <- final.comb.dat1999.2014 |> 
-  filter(Year > 2007 & !Year %in% c(2009:2011)) |>
-   filter(sciname == "Sardinops sagax")
 
 sort(unique(filtered.sardine.obs$Year))
 # [1] 2008 2012
@@ -682,7 +699,7 @@ sort(unique(filtered.sardine.obs$Year))
 length(unique(filtered.sardine.obs$keys))
 # [1] 86
 
-length(unique(filtered.sardine.obs$keys))/length(unique(filtered.sardine.obs.test$keys))*100
+length(unique(filtered.sardine.obs$keys))/length(unique(filtered.sardine.obs$keys))*100
 # [1] 30.93525
 
 # Find the number of hauls where there are not weight obs.
@@ -754,7 +771,7 @@ The objective here is to find the closest corresponding haul in time and space. 
 
 ```{r, define.target.and.source.data.frames}
 
-colnames(filtered.sardine.len.is.na)
+colnames(sardine.len.is.na)
 #  [1] "BRIDGE_LOG_ID"          "TRIP_ID"               
 #  [3] "EVENT_DATE"             "Year"                  
 #  [5] "TOW_NUMBER"             "BEGIN_DEPLOYMENT_TIME" 
@@ -782,14 +799,14 @@ colnames(filtered.sardine.len.is.na)
 # [49] "WEIGHT_G"               "standard_length"       
 # [51] "weight"                 "NBRE_Haul"             
 
-unique(is.na(filtered.sardine.len.is.na))
+unique(is.na(sardine.len.is.na))
 
 #------------------------------------
 # Create transect data for data to fill
 #------------------------------------
 Hauls2Fill.clean_sf1999_2014 <- 
   make_transect_sf(
-  filtered.sardine.len.is.na, crs = 4326) |>
+  sardine.len.is.na, crs = 4326) |>
   mutate(DatSource = "2Fill") |>
   distinct() |>
   group_by(keys, DatSource, geometry) |>
@@ -810,7 +827,7 @@ unique(is.na(Hauls2Fill.clean_sf1999_2014))
 #------------------------------------
 
 # Create unique grouping key - place holder to join on later
-keys.to.match.temp <- filtered.sardine.obs |>
+keys.to.match.temp <- sardine.obs |>
   filter(!is.na(weight)) |>
   make_transect_sf(crs = 4326) |>
   distinct() |>
@@ -852,7 +869,7 @@ knownDat_xy <- st_geometry(knownDat_sf)
 ## Spatial distance matrix (Euclidean in meters)
 dist_matrix <- st_distance(Hauls2Fill.clean_xy, knownDat_xy)
 dim(dist_matrix)
-# [1] 20 3547
+# [1] 99 14293
 
 # Remove the units (in metres)
 dist_matrix.no.units <- drop_units(dist_matrix)
@@ -867,7 +884,7 @@ temp_matrix <- compute_time_diff_matrix(
   units = "secs")
 
 dim(temp_matrix)
-# [1] 20 3547
+# [1] 99 14293
 
 ```
 
@@ -885,15 +902,16 @@ spatial_weight <- 1
 # Find the relationship to time
 
 ## Remember these are already in km/hr. Find the average speed 
-## traveled between 2008 and 2014
+## travelled between years
 meanSpeed1999_2014 <- comb.dat1999.2014.sf.clean |>
   st_drop_geometry() |>
   mutate(mean.speed = mean(SPEED, na.rm = TRUE)
   ) |>
   select(mean.speed) |>
   distinct()
+
 meanSpeed1999_2014$mean.speed
-# 9.092452
+# [1] 9.092452
 
 ## Create a temporal weight measure for seconds 
 ## Note that we need to convert the ship speed (km/hr)

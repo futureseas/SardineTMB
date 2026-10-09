@@ -71,6 +71,10 @@ us.dat.2006.2010 <-
    fread(here(dir, "Data", "ATM CPS Survey",
               "area.transects.final.2006.2010.csv"))
 #  (us.dat.2006.2010)
+dim(us.dat.2006.2010)
+# [1] 3780   58
+dim(distinct(us.dat.2006.2010))
+# [1] 3780   58
 
 us.dat.2011.2014 <- 
    read_sf(here(dir, "Data", "ATM CPS Survey",
@@ -94,6 +98,10 @@ us.dat.2021.2023 <-
    fread(here(dir, "Data", "ATM CPS Survey",
               "area.transects.final.2021.2023.csv"))
 # View(us.dat.2021.2023)
+dim(us.dat.2021.2023)
+# [1] 2424   58
+dim(distinct(us.dat.2021.2023))
+# [1] 2424   58
 
 us.dat.2024.2025 <- 
    fread(here(dir, "Data", "ATM CPS Survey",
