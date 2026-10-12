@@ -5,7 +5,7 @@ rm(list=ls())
 gc()
 
 # Define your base directory (MUST be the Linux path)
-dir <- "/mnt/c/Users/steph/Documents/Sardine_SptlOM"
+dir <- "/mnt/c/Users/shopkin1/Documents/SardineTMB"
 
 # Note the package "here" does not play well with linux
 load.lib <- c("ncdf4", "tidyverse", "data.table", "sf", "tools"#,
@@ -73,8 +73,8 @@ bbox_wgs84 <- st_bbox(c(xmin = lon_range[1], xmax = lon_range[2],
 			crs = st_crs(4326))
 
 ## 3. Transform bounding box to target CRS
-bbox_proj <- st_as_sfc(bbox_wgs84) %>%
-                st_transform(., crs = aea_custom) %>%
+bbox_proj <- st_as_sfc(bbox_wgs84) |>
+                st_transform(crs = aea_custom) |>
                 st_bbox()
 
 ## 4. Extract the new bounds in Metres

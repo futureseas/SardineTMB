@@ -24,6 +24,8 @@ dir <- here(getwd())
 
 ```
 
+ !!! Note years and summary values may differ due to NOAA database updates!!!
+
 # Create data folder if not already made
 
 ```{r, create data directory}
@@ -134,13 +136,13 @@ LifeHistoryHaulCatch$remaining_weight[is.na(LifeHistoryHaulCatch$remaining_weigh
 
 # Explore data
 length(unique(LifeHistoryHaulCatch$cruise))
-# [1] 36 
+# [1] 37 
 length(unique(LifeHistoryHaulCatch$collection))
-# [1] 2780 
+# [1] 2785 
 length(unique(LifeHistoryHaulCatch$ship))
 # [1] 8 
 length(unique(LifeHistoryHaulCatch$itis_tsn))
-# [1] 273
+# [1] 274
 
 # Bind coordinates
 LifeHistoryHaulCatch <- LifeHistoryHaulCatch |> 
@@ -152,7 +154,7 @@ LifeHistoryHaulCatch <- LifeHistoryHaulCatch |>
            paste(beginTransect, ",", endTransect, sep = ""))
 
 length(unique(LifeHistoryHaulCatch$transect.coords))
-# [1] 2780 
+# [1] 2886 
 
 colnames(LifeHistoryHaulCatch)
 #  [1] "cruise"           "ship"             "haul"            
@@ -317,10 +319,10 @@ unique(CatchWeightLengthPerHaul$is_random_sample)
 
 # How many unique collections
 length(unique(CatchWeightLengthPerHaul$collection))
-# [1] 1998
+# [1] 2006
 
 dim(CatchWeightLengthPerHaul)
-# [1] 101928     27
+# [1] 108867     27
 
 # Remove extra column
 CatchWeightLengthPerHaul <- CatchWeightLengthPerHaul |>
@@ -496,7 +498,7 @@ Haul.weights.sar <- Haul.weights.sar |>
 # data?
 #-------------------------------
 dim(Haul.weights.sar)
-# [1] 18500    28
+# [1] 18517    28
 
 ```
 
@@ -519,7 +521,7 @@ Haul.weights.sar.clean <-
   filter(quality.indic == 0) 
 
 dim(Haul.weights.sar.clean)
-# [1] 13184    28
+# [1] 13199    28
 
 #-------------------------------
 # How many hauls with
@@ -535,7 +537,7 @@ Haul.weights.sar |>
   filter(max(specimen_number) ==
            subsample_count) |>
   dim()
-# [1] 12745  28
+# [1] 12721  28
 
 #-------------------------------
 # Investigate hauls with
@@ -687,13 +689,13 @@ quality.chcks <- Haul.weights.sar |>
            is.na(quality.indic))
 
 dim(quality.chcks)
-# [1] 5316   28
+# [1] 5318   28
 
 range(quality.chcks$equilibrium_time.utc)
-# [1] "2003-07-10 07:36:00 UTC" "2024-08-03 10:27:00 UTC"
+# [1] "2003-07-10 07:36:00 UTC" "2026-08-24 08:03:36 UTC"
 
 length(unique(quality.chcks$collection))
-# [1] 97
+# [1] 99
 
 ```
 
@@ -727,7 +729,7 @@ extra.specimens <- quality.chcks |>
   filter(max(specimen_number) > subsample_count)
 
 dim(extra.specimens)
-# [1] 4794  28
+# [1] 4796  28
 # View(extra.specimens)
 
 length(unique(extra.specimens$keys))
@@ -889,9 +891,9 @@ Haul.weights.sar.remaining.2.test <-
            quality.indic != 0)
 
 dim(Haul.weights.sar.remaining.2.test)
-# [1] 508  28
+# [1] 510  28
 range(Haul.weights.sar.remaining.2.test$quality.indic)
-# [1] -0.100  0.037
+# [1] -0.100  0.209
 # It looks like it is just a scale
 # precision difference 
 
@@ -930,7 +932,7 @@ unique(Haul.weights.sar.remaining.2.test.resolved$keys)
 # [12] "200904_FR_27_2509_161729_2009-04-24 10:14:00_32.8336_-123.0088_32.8615_-123.03"  
 # [13] "201907_RL_37_4137_161729_2019-06-30 05:55:00_45.6795_-123.9993_45.6302_-124.0018"
 dim(Haul.weights.sar.remaining.2.test.resolved)
-# [1] 508  31
+# [1] 510  31
 range(Haul.weights.sar.remaining.2.test.resolved$quality.indic4)
 # [1] 0 0
 
@@ -970,7 +972,7 @@ Haul.weights.oth <- CatchWeightLengthPerHaul |>
   distinct()
 
 dim(Haul.weights.oth)
-# [1] 3508   26
+# [1] 3750   26
 
 ```
 
@@ -1034,7 +1036,7 @@ US.specimen.dat.clean <-
     Haul.weights.oth)
 
 dim(US.specimen.dat.clean)
-# [1] 21105  26
+# [1] 21364  26
 
 fwrite(US.specimen.dat.clean, 
        here(dir, survey.path,

@@ -108,14 +108,14 @@ us.dat.2024.2025 <-
               "area.transects.final.2024.2025.csv"))
 # View(us.dat.2024.2025)
 dim(us.dat.2024.2025)
-# [1] 1070   58
+# [1] 1069   58
 dim(distinct(us.dat.2024.2025))
-# [1] 1070   58
+# [1] 1069   58
 
 # Join data sets
-full.us.dat <- rbind(us.dat.2003.2005, us.dat.2006.2010,
-                     us.dat.2011.2014, us.dat.2015.2020,
-                     us.dat.2021.2023, us.dat.2024.2025) |>
+full.us.dat <- bind_rows(#us.dat.2003.2005, us.dat.2006.2010,
+                         us.dat.2011.2014, us.dat.2015.2020,
+                         us.dat.2021.2023, us.dat.2024.2025) |>
   # Create country label
   mutate(Country = "USA")
 

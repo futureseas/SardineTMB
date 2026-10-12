@@ -37,6 +37,8 @@ aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS8
 
 ```
 
+!!! Note years and summary values may differ due to NOAA database updates!!!
+
 # Create data folder if not already made
 
 ```{r, create data directory}
@@ -59,7 +61,7 @@ US.specimen.dat.clean <- fread(
        sep = ",")
 
 dim(US.specimen.dat.clean)
-# [1] 21105  26
+# [1] 21364  26
 
 # Only keep summer data for this check
 test <- US.specimen.dat.clean |> 
@@ -192,7 +194,7 @@ keys.to.match <- US.specimen.dat.clean |>
 # Find the number of hauls where sardine are present (remember to add 
 # the Hauls2Fill.clean number to the count).
 length(unique(keys.to.match$keys))
-
+# [1] 775
 
 identical(keys.to.match$Species_weight, 
           keys.to.match$subsample_weight)
@@ -299,7 +301,7 @@ knownDat_xy <- st_geometry(knownDat_sf)
 ## Spatial distance matrix (Euclidean in meters)
 dist_matrix <- st_distance(Hauls2Fill.clean_xy, knownDat_xy)
 dim(dist_matrix)
-# [1] 13 17597
+# [1] 13 17614
 
 # Remove the units (in metres)
 dist_matrix.no.units <- drop_units(dist_matrix)
@@ -314,7 +316,7 @@ temp_matrix <- compute_time_diff_matrix(
   units = "secs")
 
 dim(temp_matrix)
-# [1] 13  17597
+# [1] 13  17614
 
 ```
 
@@ -510,7 +512,7 @@ test.na.length <- allDat |>
 unique(test.na.length)
 
 dim(allDat)
-# [1] 21347  27
+# [1] 21606  27
 
 allDat <- allDat |>
   mutate(date = date(equilibrium_time.utc)) |>

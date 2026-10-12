@@ -81,7 +81,7 @@ TwoSeas.dat <- fread(here(dir, "Data",
 
 # Boxplot to check for "Empty" combinations and outliers
 lengthBinBoxPlot <-
-  ggplot(TwoSeas.dat %>%
+  ggplot(TwoSeas.dat |>
          filter(len.bin != "" & 
                   !Year %in% c(2009:2011) &
                   Year < 2021 & 
@@ -109,27 +109,27 @@ ggsave2(filename = "lengthBinDataBoxPlot.jpeg",
 ```{r, create.transect.data}
 
 # Step 1: Aggregate your raw data per haul and per length bin
-survey_aggregated <- TwoSeas.dat %>%
+survey_aggregated <- TwoSeas.dat |>
   mutate(len.bin = case_when(
     len.bin == "" | is.na(len.bin) ~ "EMPTY",
     len.bin == "200+"              ~ "200plus",
     TRUE                           ~ as.character(len.bin)
-  )) %>%
+  )) |>
   mutate(merged.bin = case_when(
     len.bin == "EMPTY"             ~ "EMPTY",
     len.bin == "200plus"           ~ "200plus",
     len.bin %in% c("150to200", "less150") ~ "less200",
     TRUE                           ~ as.character(len.bin)
-  )) %>%
+  )) |>
   mutate(merged.bin2 = case_when(
     len.bin == "EMPTY"             ~ "EMPTY",
     len.bin == "less150"           ~ "less150",
     len.bin %in% c("150to200", "less150") ~ "150plus",
     TRUE                           ~ as.character(len.bin)
-  )) %>%
+  )) |>
   group_by(keys, Year, Season, Fin_sweep.m3, latBin, len.bin, merged.bin, 
            merged.bin2, YearSeas, YearSeas.nm, mean_depth, start_latitude, 
-           start_longitude, stop_latitude, stop_longitude, Country) %>%
+           start_longitude, stop_latitude, stop_longitude, Country) |>
   summarise(
     Total_W = sum(Bin_Haul_Biomass, na.rm = TRUE),
     Species_weight = first(Species_weight, na.rm = TRUE),
@@ -137,8 +137,8 @@ survey_aggregated <- TwoSeas.dat %>%
   )
 
 # Step 2: Extract unique HAULS and their metadata
-unique_hauls_meta <- survey_aggregated %>%
-  group_by(keys, Year, Season, Country, latBin, YearSeas, YearSeas.nm) %>%
+unique_hauls_meta <- survey_aggregated |>
+  group_by(keys, Year, Season, Country, latBin, YearSeas, YearSeas.nm) |>
   summarise(
     Fin_sweep.m3    = first(Fin_sweep.m3, na.rm = TRUE),
     mean_depth      = first(mean_depth, na.rm = TRUE),
@@ -158,18 +158,18 @@ bin_mapping <- tibble(
   
 )
 
-master_grid_with_meta <- unique_hauls_meta %>%
+master_grid_with_meta <- unique_hauls_meta |>
   crossing(bin_mapping) # Crosses the haul metadata with only the valid pairs
 
 # Step 4: Join the true catch weights back onto your master grid
-survey.transects.st.final <- master_grid_with_meta %>%
+survey.transects.st.final <- master_grid_with_meta |>
   left_join(
-    survey_aggregated %>% 
-      filter(len.bin != "EMPTY") %>% 
+    survey_aggregated |> 
+      filter(len.bin != "EMPTY") |> 
       # Isolate just the structural keys and the catch data
       select(keys, len.bin, Total_W, Species_weight), 
     by = c("keys", "len.bin")
-  ) %>%
+  ) |>
   mutate(
     Total_W        = coalesce(Total_W, 0),
     Species_weight = coalesce(Species_weight, 0),
@@ -181,21 +181,21 @@ survey.transects.st.final <- master_grid_with_meta %>%
 survey.transects3.sf <- 
   make_transect_sf(survey.transects.st.final, crs = 4326) 
 
-survey.transects3.sf.clip <- survey.transects3.sf %>%
-  mutate(X = st_coordinates(st_centroid(.))[,1],
-         Y = st_coordinates(st_centroid(.))[,2]) %>%
+survey.transects3.sf.clip <- survey.transects3.sf |>
+  mutate(X = st_coordinates(st_centroid(geometry))[,1],
+         Y = st_coordinates(st_centroid(geometry))[,2]) |>
   filter(Y < 52)
 
 range(survey.transects3.sf.clip$Y)
 # [1] 31.3443 51.4088
 
 ## Create X Y columns and extract polygon centers
-TwoSeas.dat4 <- survey.transects3.sf.clip %>%
+TwoSeas.dat4 <- survey.transects3.sf.clip |>
   # Project the data to Albers Conical Equal Area
-  st_transform(., crs = aea_custom) %>%
+  st_transform(crs = aea_custom) |>
   # Extract the centre of the transect (this is in km)
-  mutate(X = st_coordinates(st_centroid(.))[,1]/1000,
-         Y = st_coordinates(st_centroid(.))[,2]/1000) %>%
+  mutate(X = st_coordinates(st_centroid(geometry))[,1]/1000,
+         Y = st_coordinates(st_centroid(geometry))[,2]/1000) |>
   st_drop_geometry() 
 
 range(TwoSeas.dat4$X)
@@ -215,7 +215,7 @@ Note that there is no Canadian data for the spring.
 ```{r, sptl.boundaries2}
 
 # Filter the data frame
-data_for_3bin_model <- TwoSeas.dat4 %>%
+data_for_3bin_model <- TwoSeas.dat4 |>
   filter(Season == "Summer" & !Year %in% c(2009:2011) &
            # To be able to compare with ROMS
            Year < 2021
@@ -248,7 +248,7 @@ This is based on the literature and survey reports across the US and Canadian Su
 
 ```{r, gear.configs}
 
-data_for_3bin_model <- data_for_3bin_model %>%
+data_for_3bin_model <- data_for_3bin_model |>
   mutate(GearConfig = case_when(
     Country == "Canada" & Year < 2017 ~ "CADpre2017",
     Country == "Canada" & Year == 2017 ~ "CAD2017",
@@ -264,7 +264,7 @@ data_for_3bin_model <- data_for_3bin_model %>%
 
 ```{r, Offsets}
 
-data_for_3bin_model <- data_for_3bin_model %>%
+data_for_3bin_model <- data_for_3bin_model |>
   mutate(LogArea = log(Fin_sweep.m3),
          LogArea30 = log(Fin_sweep.m3/30),
          LogAreaMLD = log(Fin_sweep.m3/mean_depth)
@@ -313,8 +313,8 @@ For comparing cross validation, the same folds as the global model need to be us
 Season.2.dat.w.folds <- readRDS(here(dir, "Season.2.dat.w.folds.rds"))
 
 # Create a clean 1:1 lookup table
-master_fold_lookup <- Season.2.dat.w.folds %>%
-  select(keys, fold_id = .folds) %>%
+master_fold_lookup <- Season.2.dat.w.folds |>
+  select(keys, fold_id = .folds) |>
   distinct()
 
 ```
@@ -361,9 +361,9 @@ These are: "less150", "150to200", and "200plus".
 
 ```{r, ThreeLengthBinStructureSummary}
 
-ThreeLenBin.dat.w.folds <- data_for_3bin_model %>%
-  select(-c(merged.bin, merged.bin2)) %>%
-  left_join(master_fold_lookup, by = "keys") #%>%
+ThreeLenBin.dat.w.folds <- data_for_3bin_model |>
+  select(-c(merged.bin, merged.bin2)) |>
+  left_join(master_fold_lookup, by = "keys") #|>
   #mutate(
   #  # Micro-jitter the data so avoid instability introduced by three samples 
   #  # per geographic coordinate
@@ -923,17 +923,17 @@ if (!Initial.model.selection.is.made) {
   # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
   # ====================================================================
   
-  model_decision_table <- summary_df %>%
+  model_decision_table <- summary_df |>
     # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
     select(
       Suite, Model, 
       `Main Sanity`, `CV Sanity`, `Folds Passed`, 
       `Total ELPD`, 
       everything() 
-    ) %>%
+    ) |>
     
     # Calculate relative DELTA ELPD grouped by Suite
-    group_by(Suite) %>%
+    group_by(Suite) |>
     mutate(
       # Condition: Row must pass both sanity tests and have valid ELPD data
       is_valid_baseline = `Main Sanity` == "Pass" & 
@@ -949,12 +949,12 @@ if (!Initial.model.selection.is.made) {
       
       # Compute Delta (The top model outputs 0, inferior models output negative values)
       `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
-    ) %>%
-    ungroup() %>%
+    ) |>
+    ungroup() |>
     
     # Drop calculation columns and position DELTA ELPD next to Total ELPD
-    select(-is_valid_baseline, -baseline_elpd) %>%
-    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    select(-is_valid_baseline, -baseline_elpd) |>
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) |>
     
     # Sorting: Sort by Suite, then arrange by Delta descending 
     # This places your 0-valued best model at the top of each suite.
@@ -1051,17 +1051,17 @@ if (Initial.model.selection.reml.is.made == F){
   # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
   # ====================================================================
   
-  model_decision_table <- summary_df %>%
+  model_decision_table <- summary_df |>
     # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
     select(
       Suite, Model, 
       `Main Sanity`, `CV Sanity`, `Folds Passed`, 
       `Total ELPD`, 
       everything() 
-    ) %>%
+    ) |>
     
     # Calculate relative DELTA ELPD grouped by Suite
-    group_by(Suite) %>%
+    group_by(Suite) |>
     mutate(
       # Condition: Row must pass both sanity tests and have valid ELPD data
       is_valid_baseline = `Main Sanity` == "Pass" & 
@@ -1077,12 +1077,12 @@ if (Initial.model.selection.reml.is.made == F){
       
       # Compute Delta (The top model outputs 0, inferior models output negative values)
       `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
-    ) %>%
-    ungroup() %>%
+    ) |>
+    ungroup() |>
     
     # Drop calculation columns and position DELTA ELPD next to Total ELPD
-    select(-is_valid_baseline, -baseline_elpd) %>%
-    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    select(-is_valid_baseline, -baseline_elpd) |>
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) |>
     
     # Sorting: Sort by Suite, then arrange by Delta descending 
     # This places your 0-valued best model at the top of each suite.
@@ -1162,8 +1162,8 @@ r_aggr <- DHARMa::recalculateResiduals(r_fit,
                                        group = interaction(ThreeLenBin.dat.w.folds$X,
                                                            ThreeLenBin.dat.w.folds$Y))
 ## 2. Get the unique coordinates that match the aggregated residuals
-coords_unique <- ThreeLenBin.dat.w.folds %>%
-  group_by(X, Y) %>%
+coords_unique <- ThreeLenBin.dat.w.folds |>
+  group_by(X, Y) |>
   summarize(.groups = "drop")
 ## 3. Run the test
 DHARMa::testSpatialAutocorrelation(r_aggr, 
@@ -1364,10 +1364,10 @@ These are: "less200" and "200plus".
 
 ```{r, TwoLengthBin200StructureSummary}
 
-TwoLenBin200.dat.w.folds <- data_for_3bin_model %>%
-  select(-c(len.bin, merged.bin2)) %>%
-  left_join(master_fold_lookup, by = "keys") %>%
-  distinct() %>%
+TwoLenBin200.dat.w.folds <- data_for_3bin_model |>
+  select(-c(len.bin, merged.bin2)) |>
+  left_join(master_fold_lookup, by = "keys") |>
+  distinct() |>
   mutate(merged.bin = as.factor(merged.bin))
 
 # 2. Update it for your Length Bin data (data_for_3bin_model.w.folds)
@@ -1916,17 +1916,17 @@ if (!Initial.200model.selection.is.made) {
   # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
   # ====================================================================
   
-  model_decision_table.200Models <- summary_df.200Models %>%
+  model_decision_table.200Models <- summary_df.200Models |>
     # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
     select(
       Suite, Model, 
       `Main Sanity`, `CV Sanity`, `Folds Passed`, 
       `Total ELPD`, 
       everything() 
-    ) %>%
+    ) |>
     
     # Calculate relative DELTA ELPD grouped by Suite
-    group_by(Suite) %>%
+    group_by(Suite) |>
     mutate(
       # Condition: Row must pass both sanity tests and have valid ELPD data
       is_valid_baseline = `Main Sanity` == "Pass" & 
@@ -1942,12 +1942,12 @@ if (!Initial.200model.selection.is.made) {
       
       # Compute Delta (The top model outputs 0, inferior models output negative values)
       `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
-    ) %>%
-    ungroup() %>%
+    ) |>
+    ungroup() |>
     
     # Drop calculation columns and position DELTA ELPD next to Total ELPD
-    select(-is_valid_baseline, -baseline_elpd) %>%
-    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    select(-is_valid_baseline, -baseline_elpd) |>
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) |>
     
     # Sorting: Sort by Suite, then arrange by Delta descending 
     # This places your 0-valued best model at the top of each suite.
@@ -2040,17 +2040,17 @@ if (Initial.200model.selection.reml.is.made == F){
   # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
   # ====================================================================
   
-  model_decision_table.200Models <- summary_df.200Models %>%
+  model_decision_table.200Models <- summary_df.200Models |>
     # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
     select(
       Suite, Model, 
       `Main Sanity`, `CV Sanity`, `Folds Passed`, 
       `Total ELPD`, 
       everything() 
-    ) %>%
+    ) |>
     
     # Calculate relative DELTA ELPD grouped by Suite
-    group_by(Suite) %>%
+    group_by(Suite) |>
     mutate(
       # Condition: Row must pass both sanity tests and have valid ELPD data
       is_valid_baseline = `Main Sanity` == "Pass" & 
@@ -2066,12 +2066,12 @@ if (Initial.200model.selection.reml.is.made == F){
       
       # Compute Delta (The top model outputs 0, inferior models output negative values)
       `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
-    ) %>%
-    ungroup() %>%
+    ) |>
+    ungroup() |>
     
     # Drop calculation columns and position DELTA ELPD next to Total ELPD
-    select(-is_valid_baseline, -baseline_elpd) %>%
-    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    select(-is_valid_baseline, -baseline_elpd) |>
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) |>
     
     # Sorting: Sort by Suite, then arrange by Delta descending 
     # This places your 0-valued best model at the top of each suite.
@@ -2155,8 +2155,8 @@ r_aggr.200Models <- DHARMa::recalculateResiduals(r_fit.200Models,
                                                 group = interaction(TwoLenBin200.dat.w.folds$X,
                                                                     TwoLenBin200.dat.w.folds$Y))
 ## 2. Get the unique coordinates that match the aggregated residuals
-coords_unique.200Models <- TwoLenBin200.dat.w.folds %>%
-  group_by(X, Y) %>%
+coords_unique.200Models <- TwoLenBin200.dat.w.folds |>
+  group_by(X, Y) |>
   summarize(.groups = "drop")
 
 ## 3. Run the test
@@ -2366,10 +2366,10 @@ These are: "less150" and "150plus".
 
 ```{r, TwoLengthBin150StructureSummary}
 
-TwoLenBin150.dat.w.folds <- data_for_3bin_model %>%
-  select(-c(len.bin, merged.bin)) %>%
-  left_join(master_fold_lookup, by = "keys") %>%
-  distinct() %>%
+TwoLenBin150.dat.w.folds <- data_for_3bin_model |>
+  select(-c(len.bin, merged.bin)) |>
+  left_join(master_fold_lookup, by = "keys") |>
+  distinct() |>
   mutate(merged.bin2 = as.factor(merged.bin2))
 
 # 2. Update it for your Length Bin data (data_for_3bin_model.w.folds)
@@ -2917,17 +2917,17 @@ if (!Initial.model.selection.is.made) {
   # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
   # ====================================================================
   
-  model_decision_table.150Models <- summary_df.150Models %>%
+  model_decision_table.150Models <- summary_df.150Models |>
     # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
     select(
       Suite, Model, 
       `Main Sanity`, `CV Sanity`, `Folds Passed`, 
       `Total ELPD`, 
       everything() 
-    ) %>%
+    ) |>
     
     # Calculate relative DELTA ELPD grouped by Suite
-    group_by(Suite) %>%
+    group_by(Suite) |>
     mutate(
       # Condition: Row must pass both sanity tests and have valid ELPD data
       is_valid_baseline = `Main Sanity` == "Pass" & 
@@ -2943,12 +2943,12 @@ if (!Initial.model.selection.is.made) {
       
       # Compute Delta (The top model outputs 0, inferior models output negative values)
       `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
-    ) %>%
-    ungroup() %>%
+    ) |>
+    ungroup() |>
     
     # Drop calculation columns and position DELTA ELPD next to Total ELPD
-    select(-is_valid_baseline, -baseline_elpd) %>%
-    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    select(-is_valid_baseline, -baseline_elpd) |>
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) |>
     
     # Sorting: Sort by Suite, then arrange by Delta descending 
     # This places your 0-valued best model at the top of each suite.
@@ -3045,17 +3045,17 @@ if (Initial.150model.selection.reml.is.made == F){
   # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
   # ====================================================================
   
-  model_decision_table.150Models <- summary_df.150Models %>%
+  model_decision_table.150Models <- summary_df.150Models |>
     # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
     select(
       Suite, Model, 
       `Main Sanity`, `CV Sanity`, `Folds Passed`, 
       `Total ELPD`, 
       everything() 
-    ) %>%
+    ) |>
     
     # Calculate relative DELTA ELPD grouped by Suite
-    group_by(Suite) %>%
+    group_by(Suite) |>
     mutate(
       # Condition: Row must pass both sanity tests and have valid ELPD data
       is_valid_baseline = `Main Sanity` == "Pass" & 
@@ -3071,12 +3071,12 @@ if (Initial.150model.selection.reml.is.made == F){
       
       # Compute Delta (The top model outputs 0, inferior models output negative values)
       `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
-    ) %>%
-    ungroup() %>%
+    ) |>
+    ungroup() |>
     
     # Drop calculation columns and position DELTA ELPD next to Total ELPD
-    select(-is_valid_baseline, -baseline_elpd) %>%
-    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    select(-is_valid_baseline, -baseline_elpd) |>
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) |>
     
     # Sorting: Sort by Suite, then arrange by Delta descending 
     # This places your 0-valued best model at the top of each suite.
@@ -3161,8 +3161,8 @@ r_aggr.150Models <- DHARMa::recalculateResiduals(r_fit.150Models,
                                                            TwoLenBin150.dat.w.folds$Y))
 
 ## 2. Get the unique coordinates that match the aggregated residuals
-coords_unique.150Models <- TwoLenBin150.dat.w.folds %>%
-  group_by(X, Y) %>%
+coords_unique.150Models <- TwoLenBin150.dat.w.folds |>
+  group_by(X, Y) |>
   summarize(.groups = "drop")
 
 ## 3. Run the test
@@ -3404,8 +3404,8 @@ sum_or_na <- function(x) {
 # (RMSE / MAE)
 #-----------------------------------------------
 
-preds_full <- cv_deltalognormal.loglink.reml$data %>%
-  group_by(.folds, keys) %>%
+preds_full <- cv_deltalognormal.loglink.reml$data |>
+  group_by(.folds, keys) |>
   summarize(
     # Total observed biomass at that station (sum of bins)
     obs_total = sum(Total_W), 
@@ -3414,15 +3414,15 @@ preds_full <- cv_deltalognormal.loglink.reml$data %>%
     .groups = "drop"
   )
 
-preds_full_comparison <- preds_full %>%
-  group_by(.folds) %>%
+preds_full_comparison <- preds_full |>
+  group_by(.folds) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(
     diff  = sum_obs - sum_pred,
     Model = "Full model (sptl)"
@@ -3471,12 +3471,12 @@ preds_full_comparison <- preds_full %>%
 # 4. Calculate Global Metrics
 #-----------------------------------------------
 
-final_full_summary <- preds_full %>%
+final_full_summary <- preds_full |>
   summarize(
     global_rmse = sqrt(mean((obs_total - pred_total)^2)),
     global_mae  = mean(abs(obs_total - pred_total)),
     .groups     = "drop" 
-  ) %>%
+  ) |>
   mutate(
 #    r2_dev_delta = r2_dev_delta, 
 #    ll_cv        = ll_cv,
@@ -3498,8 +3498,8 @@ View(final_full_summary)
 # (RMSE / MAE)
 #-----------------------------------------------
 
-preds_3lenBin <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data %>%
-  group_by(fold_id, keys) %>%
+preds_3lenBin <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data |>
+  group_by(fold_id, keys) |>
   summarize(
     # Total observed biomass at that station (sum of bins)
     obs_total = sum(Total_W), 
@@ -3508,17 +3508,17 @@ preds_3lenBin <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data %>%
     .groups = "drop"
   )
 
-preds_3lenBin_comparison <- preds_3lenBin %>%
-  group_by(fold_id) %>%
+preds_3lenBin_comparison <- preds_3lenBin |>
+  group_by(fold_id) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(diff = sum_obs - sum_pred,
-         Model = "3 LenBins (CoVar + sptl)") %>%
+         Model = "3 LenBins (CoVar + sptl)") |>
   rename(.folds = fold_id)
 
 #-----------------------------------------------
@@ -3564,10 +3564,10 @@ preds_3lenBin_comparison <- preds_3lenBin %>%
 # 4. Calculate Global Metrics
 #-----------------------------------------------
 
-final_3lenBin_summary <- preds_3bins %>%
+final_3lenBin_summary <- preds_3bins |>
   summarize(global_rmse = sqrt(mean((obs_total - pred_total)^2)),
             global_mae  = mean(abs(obs_total - pred_total)),
-            .groups     = "drop") %>%
+            .groups     = "drop") |>
   mutate(
 #    r2_dev_delta = r2_dev_delta_3lenBin, 
 #    ll_cv        = ll_3lenBin_cv,
@@ -3589,8 +3589,8 @@ View(final_3lenBin_summary)
 # (RMSE / MAE)
 #-----------------------------------------------
 
-preds_bin200 <- cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data %>%
-  group_by(fold_id, keys) %>%
+preds_bin200 <- cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data |>
+  group_by(fold_id, keys) |>
   summarize(
     # Total observed biomass at that station (sum of bins)
     obs_total = sum(Total_W), 
@@ -3599,17 +3599,17 @@ preds_bin200 <- cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data %
     .groups = "drop"
   )
 
-preds_bin200_comparison <- preds_bin200 %>%
-  group_by(fold_id) %>%
+preds_bin200_comparison <- preds_bin200 |>
+  group_by(fold_id) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(diff = sum_obs - sum_pred,
-         Model = "2 LenBins 200 mm cut off (CoVar + sptl)") %>%
+         Model = "2 LenBins 200 mm cut off (CoVar + sptl)") |>
   rename(.folds = fold_id)
 
 #-----------------------------------------------
@@ -3655,10 +3655,10 @@ preds_bin200_comparison <- preds_bin200 %>%
 # 4. Calculate Global Metrics
 #-----------------------------------------------
 
-final_bin200_summary <- preds_bin200 %>%
+final_bin200_summary <- preds_bin200 |>
   summarize(global_rmse = sqrt(mean((obs_total - pred_total)^2)),
             global_mae  = mean(abs(obs_total - pred_total)),
-            .groups     = "drop") %>%
+            .groups     = "drop") |>
   mutate(
 #    r2_dev_delta = r2_dev_delta_bin200, 
 #    ll_cv        = ll_bin200_cv,
@@ -3680,8 +3680,8 @@ View(final_bin200_summary)
 # (RMSE / MAE)
 #-----------------------------------------------
 
-preds_bin150 <- cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data %>%
-  group_by(fold_id, keys) %>%
+preds_bin150 <- cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data |>
+  group_by(fold_id, keys) |>
   summarize(
     # Total observed biomass at that station (sum of bins)
     obs_total = sum(Total_W), 
@@ -3692,17 +3692,17 @@ preds_bin150 <- cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data %
 
 # 2. Calculate the performance metrics per Fold
 # Use this for your table showing how each fold performed
-preds_bin150_comparison <- preds_bin150 %>%
-  group_by(fold_id) %>%
+preds_bin150_comparison <- preds_bin150 |>
+  group_by(fold_id) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(diff = sum_obs - sum_pred,
-         Model = "2 LenBins 150 mm cut off (CoVar + sptl)") %>%
+         Model = "2 LenBins 150 mm cut off (CoVar + sptl)") |>
   rename(.folds = fold_id)
 
 #-----------------------------------------------
@@ -3748,10 +3748,10 @@ preds_bin150_comparison <- preds_bin150 %>%
 # 4. Calculate Global Metrics
 #-----------------------------------------------
 
-final_bin150_summary <- preds_bin150 %>%
+final_bin150_summary <- preds_bin150 |>
   summarize(global_rmse = sqrt(mean((obs_total - pred_total)^2)),
             global_mae  = mean(abs(obs_total - pred_total)),
-            .groups     = "drop") %>%
+            .groups     = "drop") |>
   mutate(
 #    r2_dev_delta = r2_dev_delta_bin150, 
 #    ll_cv        = ll_bin150_cv,
@@ -3810,23 +3810,23 @@ test2 <- rbind(final_full_summary,
                final_bin200_summary,
                final_bin150_summary)
 
-test2 <- test2 %>%
+test2 <- test2 |>
   select(
     Model,
     `Global CV RMSE` = global_rmse,
     `Global CV MAE`  = global_mae
-  ) %>%
+  ) |>
   mutate(
     ref_rmse = final_full_summary$global_rmse,
     ref_mae = final_full_summary$global_mae
-  ) %>%
+  ) |>
   # Calculate % difference relative to final_full_summary
   mutate(
     `% Δ RMSE` = (`Global CV RMSE` - ref_rmse) / ref_rmse * 100,
     `% Δ MAE`  = (`Global CV MAE`  - ref_mae)  / ref_mae  * 100
-  ) %>%
+  ) |>
   # Optional: sort best to worst by RMSE
-  arrange(`Global CV RMSE`) %>%
+  arrange(`Global CV RMSE`) |>
   select(-c(ref_rmse, ref_mae))
 
 View(test2)
@@ -3925,17 +3925,17 @@ if (Initial.200model.selection.reml2.is.made == F){
   # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
   # ====================================================================
   
-  model_decision_table.200Models <- summary_df.200Models %>%
+  model_decision_table.200Models <- summary_df.200Models |>
     # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
     select(
       Suite, Model, 
       `Main Sanity`, `CV Sanity`, `Folds Passed`, 
       `Total ELPD`, 
       everything() 
-    ) %>%
+    ) |>
     
     # Calculate relative DELTA ELPD grouped by Suite
-    group_by(Suite) %>%
+    group_by(Suite) |>
     mutate(
       # Condition: Row must pass both sanity tests and have valid ELPD data
       is_valid_baseline = `Main Sanity` == "Pass" & 
@@ -3951,12 +3951,12 @@ if (Initial.200model.selection.reml2.is.made == F){
       
       # Compute Delta (The top model outputs 0, inferior models output negative values)
       `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
-    ) %>%
-    ungroup() %>%
+    ) |>
+    ungroup() |>
     
     # Drop calculation columns and position DELTA ELPD next to Total ELPD
-    select(-is_valid_baseline, -baseline_elpd) %>%
-    relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+    select(-is_valid_baseline, -baseline_elpd) |>
+    relocate(`DELTA ELPD`, .after = `Total ELPD`) |>
     
     # Sorting: Sort by Suite, then arrange by Delta descending 
     # This places your 0-valued best model at the top of each suite.
@@ -4040,8 +4040,8 @@ r_aggr.200Models.sptlVarying <- DHARMa::recalculateResiduals(r_fit.200Models.spt
                                                             group = interaction(TwoLenBin200.dat.w.folds$X,
                                                                                 TwoLenBin200.dat.w.folds$Y))
 ## 2. Get the unique coordinates that match the aggregated residuals
-coords_unique.200Models.sptlVarying <- TwoLenBin200.dat.w.folds %>%
-  group_by(X, Y) %>%
+coords_unique.200Models.sptlVarying <- TwoLenBin200.dat.w.folds |>
+  group_by(X, Y) |>
   summarize(.groups = "drop")
 
 ## 3. Run the test
@@ -4299,8 +4299,8 @@ sanity(cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$model[[5]])
 #-----------------------------------------------
 
 preds_200SptlVarying <- 
-  cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$data %>%
-   group_by(fold_id, keys) %>%
+  cv_deltalognormalLogArea.sptlVarying.str4.200Models.reml$data |>
+   group_by(fold_id, keys) |>
    summarize(
      # Total observed biomass at that station (sum of bins)
      obs_total = sum(Total_W), 
@@ -4309,29 +4309,29 @@ preds_200SptlVarying <-
      .groups = "drop"
    )
 
-preds_200SptlVarying_comparison <- preds_200SptlVarying %>%
-  group_by(fold_id) %>%
+preds_200SptlVarying_comparison <- preds_200SptlVarying |>
+  group_by(fold_id) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(diff = sum_obs - sum_pred,
-         Model = "2 LenBins 200 mm cut off (CoVar + sptl + Sptl Varying)")  %>%
+         Model = "2 LenBins 200 mm cut off (CoVar + sptl + Sptl Varying)")  |>
   rename(.folds = fold_id)
 
 #-----------------------------------------------
 # 2. Calculate Global Metrics
 #-----------------------------------------------
 
-final_200SptlVarying_summary <- preds_200SptlVarying %>%
+final_200SptlVarying_summary <- preds_200SptlVarying |>
   summarize(
     global_rmse = sqrt(mean((obs_total - pred_total)^2)),
     global_mae  = mean(abs(obs_total - pred_total)),
     .groups     = "drop" 
-  ) %>%
+  ) |>
   mutate(
     Model = 
       "2 LenBins 200 mm cut off (CoVar + sptl + Sptl Varying) - minus folds 2 & 5"
@@ -4352,8 +4352,8 @@ final_200SptlVarying_summary <- preds_200SptlVarying %>%
 # (RMSE / MAE)
 #-----------------------------------------------
 
-preds_full.clip <- cv_deltalognormal.loglink.reml$data %>%
-  group_by(.folds, keys) %>%
+preds_full.clip <- cv_deltalognormal.loglink.reml$data |>
+  group_by(.folds, keys) |>
    summarize(
      # Total observed biomass at that station (sum of bins)
      obs_total = sum(Total_W), 
@@ -4362,15 +4362,15 @@ preds_full.clip <- cv_deltalognormal.loglink.reml$data %>%
      .groups = "drop"
      )
 
-preds_full.clip_comparison <- preds_full.clip %>%
-  group_by(.folds) %>%
+preds_full.clip_comparison <- preds_full.clip |>
+  group_by(.folds) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(diff = sum_obs - sum_pred,
          Model = "Full model (sptl)")
 
@@ -4378,13 +4378,13 @@ preds_full.clip_comparison <- preds_full.clip %>%
 # 2. Calculate Global Metrics
 #-----------------------------------------------
 
-final_full.clip_summary <- preds_full.clip %>%
-  filter(!.folds %in% c(2,5)) %>% # Define fols to exclude
+final_full.clip_summary <- preds_full.clip |>
+  filter(!.folds %in% c(2,5)) |> # Define fols to exclude
   summarize(
     global_rmse = sqrt(mean((obs_total - pred_total)^2)),
     global_mae  = mean(abs(obs_total - pred_total)),
     .groups = "drop"
-  ) %>%
+  ) |>
   mutate(Model = "Full model (sptl) - minus folds 2 & 5")
 
 #-----------------------------------------------
@@ -4396,8 +4396,8 @@ final_full.clip_summary <- preds_full.clip %>%
 # (RMSE / MAE)
 #-----------------------------------------------
 
-preds_3bins.clip <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data %>%
-group_by(fold_id, keys) %>%
+preds_3bins.clip <- cv_deltalognormalLogArea.w.lengthBin.CoVar.reml$data |>
+group_by(fold_id, keys) |>
    summarize(
      # Total observed biomass at that station (sum of bins)
      obs_total = sum(Total_W), 
@@ -4406,30 +4406,30 @@ group_by(fold_id, keys) %>%
      .groups = "drop"
      )
 
-preds_3bins.clip_comparison <- preds_3bins.clip %>%
-  group_by(fold_id) %>%
+preds_3bins.clip_comparison <- preds_3bins.clip |>
+  group_by(fold_id) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(diff = sum_obs - sum_pred,
-         Model = "3 LenBins (CoVar + sptl)") %>%
+         Model = "3 LenBins (CoVar + sptl)") |>
   rename(.folds = fold_id)
 
 #-----------------------------------------------
 # 2. Calculate Global Metrics
 #-----------------------------------------------
 
-final_3bins.clip_summary <- preds_3bins.clip %>%
-  filter(!fold_id %in% c(2,5)) %>% # Define fols to exclude
+final_3bins.clip_summary <- preds_3bins.clip |>
+  filter(!fold_id %in% c(2,5)) |> # Define fols to exclude
   summarize(
     global_rmse = sqrt(mean((obs_total - pred_total)^2)),
     global_mae  = mean(abs(obs_total - pred_total)),
     .groups = "drop"
-  ) %>%
+  ) |>
   mutate(Model = "3 LenBins (CoVar + sptl) - minus folds 2 & 5")
 
 #-----------------------------------------------
@@ -4442,8 +4442,8 @@ final_3bins.clip_summary <- preds_3bins.clip %>%
 # (RMSE / MAE)
 #-----------------------------------------------
 preds_bin200.clip <- 
-  cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data %>%
-  group_by(fold_id, keys) %>%
+  cv_deltalognormalLogArea.w.lengthBin.CoVar.200Models.reml$data |>
+  group_by(fold_id, keys) |>
    summarize(
      # Total observed biomass at that station (sum of bins)
      obs_total = sum(Total_W), 
@@ -4452,30 +4452,30 @@ preds_bin200.clip <-
      .groups = "drop"
      )
 
-preds_bin200.clip_comparison <- preds_bin200.clip %>%
-  group_by(fold_id) %>%
+preds_bin200.clip_comparison <- preds_bin200.clip |>
+  group_by(fold_id) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(diff = sum_obs - sum_pred,
-         Model = "2 LenBins 200 mm cut off (CoVar + sptl)") %>%
+         Model = "2 LenBins 200 mm cut off (CoVar + sptl)") |>
   rename(.folds = fold_id)
 
 #-----------------------------------------------
 # 2. Calculate Global Metrics
 #-----------------------------------------------
 
-final_bin200.clip_summary <- preds_bin200.clip %>%
-  filter(!fold_id %in% c(2,5)) %>% # Define fols to exclude
+final_bin200.clip_summary <- preds_bin200.clip |>
+  filter(!fold_id %in% c(2,5)) |> # Define fols to exclude
   summarize(
     global_rmse = sqrt(mean((obs_total - pred_total)^2)),
     global_mae  = mean(abs(obs_total - pred_total)),
     .groups = "drop"
-  ) %>%
+  ) |>
   mutate(Model = "2 LenBins 200 mm cut off (CoVar + sptl) - minus folds 2 & 5")
 
 #-----------------------------------------------
@@ -4488,8 +4488,8 @@ final_bin200.clip_summary <- preds_bin200.clip %>%
 # (RMSE / MAE)
 #-----------------------------------------------
 preds_bin150.clip <- 
-  cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data %>%
-  group_by(fold_id, keys) %>%
+  cv_deltalognormalLogArea.w.lengthBin.CoVar.150Models.reml$data |>
+  group_by(fold_id, keys) |>
    summarize(
      # Total observed biomass at that station (sum of bins)
      obs_total = sum(Total_W), 
@@ -4500,30 +4500,30 @@ preds_bin150.clip <-
 
 # 2. Calculate the performance metrics per Fold
 # Use this for your table showing how each fold performed
-preds_bin150.clip_comparison <- preds_bin150.clip %>%
-  group_by(fold_id) %>%
+preds_bin150.clip_comparison <- preds_bin150.clip |>
+  group_by(fold_id) |>
   summarize(
     rmse     = sqrt(mean((obs_total - pred_total)^2)),
     mae      = mean(abs(obs_total - pred_total)),
     sum_obs  = sum(obs_total),
     sum_pred = sum(pred_total),
     .groups  = "drop"
-  ) %>%
+  ) |>
   mutate(diff = sum_obs - sum_pred,
-         Model = "2 LenBins 150 mm cut off (CoVar + sptl)") %>%
+         Model = "2 LenBins 150 mm cut off (CoVar + sptl)") |>
   rename(.folds = fold_id)
 
 #-----------------------------------------------
 # 2. Calculate Global Metrics
 #-----------------------------------------------
 
-final_bin150.clip_summary <- preds_bin150.clip %>%
-  filter(!fold_id %in% c(2,5)) %>% # Define fols to exclude
+final_bin150.clip_summary <- preds_bin150.clip |>
+  filter(!fold_id %in% c(2,5)) |> # Define fols to exclude
   summarize(
     global_rmse = sqrt(mean((obs_total - pred_total)^2)),
     global_mae  = mean(abs(obs_total - pred_total)),
     .groups = "drop"
-  ) %>%
+  ) |>
   mutate(Model = "2 LenBins 150 mm cut off (CoVar + sptl) - minus folds 2 & 5")
 
 ```
@@ -4577,23 +4577,23 @@ test3.clip <- rbind(final_200SptlVarying_summary,
                     final_bin150.clip_summary
                     )
 
-test3.clip <- test3.clip %>%
+test3.clip <- test3.clip |>
   select(
     Model,
     `Global CV RMSE` = global_rmse,
     `Global CV MAE`  = global_mae
-  ) %>%
+  ) |>
   mutate(
     ref_rmse = final_full.clip_summary$global_rmse,
     ref_mae = final_full.clip_summary$global_mae
-  ) %>%
+  ) |>
   # Calculate % difference relative to final_full_summary
   mutate(
     `% Δ RMSE` = (`Global CV RMSE` - ref_rmse) / ref_rmse * 100,
     `% Δ MAE`  = (`Global CV MAE`  - ref_mae)  / ref_mae  * 100
-  ) %>%
+  ) |>
   # Optional: sort best to worst by RMSE
-  arrange(`Global CV RMSE`) %>%
+  arrange(`Global CV RMSE`) |>
   select(-c(ref_rmse, ref_mae))
 
 View(test3.clip)

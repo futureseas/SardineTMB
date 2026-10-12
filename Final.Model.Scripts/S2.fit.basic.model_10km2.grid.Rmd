@@ -263,8 +263,8 @@ Populated10.wgs84 <- ne_download(scale = 110,
                                  category = "cultural", 
                                  returnclass = "sf") 
 
-Populated10.aea_custom <- Populated10.wgs84 %>%
-  st_transform(., crs = aea_custom)
+Populated10.aea_custom <- Populated10.wgs84 |>
+  st_transform(crs = aea_custom)
 
 Populated10.aea_custom <- st_intersection(Populated10.aea_custom,
                                           PCoastStates.aea_custom)
@@ -282,37 +282,37 @@ Populated10.aea_custom <- st_intersection(Populated10.aea_custom,
 # For the U.S.
 # Download US EEZ polygons directly from MarineRegions.org
 us_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'United States' OR sovereign2 = 'United States'")
-us_eez <- us_eez_raw %>% 
+us_eez <- us_eez_raw |> 
   # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) %>%
+  st_crop(pacific_bbox) |>
   # Transform to your custom projection AFTER cropping
-  st_transform(crs = aea_custom) %>% 
+  st_transform(crs = aea_custom) |> 
   # Clean up any geometry artifacts along the crop edge
   st_make_valid()
 
 # For Canada
 canada_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'")
-canada_eez <- canada_eez_raw %>% 
+canada_eez <- canada_eez_raw |> 
   # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) %>%
+  st_crop(pacific_bbox) |>
   # Transform to your custom projection AFTER cropping
-  st_transform(crs = aea_custom) %>% 
+  st_transform(crs = aea_custom) |> 
   # Clean up any geometry artifacts along the crop edge
   st_make_valid()
 
 # For Overlapping claims
-contested_cad_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'") %>% 
+contested_cad_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'") |> 
   filter(pol_type == "Overlapping claim") 
 dim(contested_cad_raw)
 # [1] 1 32
 
 # For Mexico
 mexico_eez_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Mexico' OR sovereign2 = 'Mexico'")
-mexico_eez <- mexico_eez_raw %>% 
+mexico_eez <- mexico_eez_raw |> 
   # Crop the polygon to the Pacific region
-  st_crop(pacific_bbox) %>%
+  st_crop(pacific_bbox) |>
   # Transform to your custom projection AFTER cropping
-  st_transform(crs = aea_custom) %>% 
+  st_transform(crs = aea_custom) |> 
   # Clean up any geometry artifacts along the crop edge
   st_make_valid()
 
@@ -321,24 +321,24 @@ mexico_eez <- mexico_eez_raw %>%
 #------------------------------
 
 ## For U.S.
-contested_us_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'United States' OR sovereign2 = 'United States'") %>% 
-  filter(pol_type == "Overlapping claim") %>% 
+contested_us_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'United States' OR sovereign2 = 'United States'") |> 
+  filter(pol_type == "Overlapping claim") |> 
   # Crop the polygon to the Pacific region
   st_crop(pacific_bbox) 
 dim(contested_us_raw)
 # [1] 0 32
 
 ## For Canada
-contested_cad_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'") %>% 
-  filter(pol_type == "Overlapping claim") %>% 
+contested_cad_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Canada' OR sovereign2 = 'Canada'") |> 
+  filter(pol_type == "Overlapping claim") |> 
   # Crop the polygon to the Pacific region
   st_crop(pacific_bbox) 
 dim(contested_cad_raw)
 # [1] 0 32
 
 ## For Mexico
-contested_mex_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Mexico' OR sovereign2 = 'Mexico'") %>% 
-  filter(pol_type == "Overlapping claim") %>% 
+contested_mex_raw <- mrp_get("eez", cql_filter = "sovereign1 = 'Mexico' OR sovereign2 = 'Mexico'") |> 
+  filter(pol_type == "Overlapping claim") |> 
   # Crop the polygon to the Pacific region
   st_crop(pacific_bbox) 
 dim(contested_mex_raw)
@@ -379,8 +379,8 @@ nstock <- st_sf(
       st_linestring(matrix(c(-133, 40.4385, -111, 40.4385), 
                            ncol = 2, byrow = TRUE))),
   crs = 4326
-  ) %>%
-  st_transform(., crs = aea_custom)
+  ) |>
+  st_transform(crs = aea_custom)
 
 # Create southern stock boundary (Point Conception, CA)
 point.concept <- st_sf(
@@ -389,8 +389,8 @@ point.concept <- st_sf(
       st_linestring(matrix(c(-133, 34.4486, -111, 34.4486), 
                            ncol = 2, byrow = TRUE))),
   crs = 4326
-  ) %>%
-  st_transform(., crs = aea_custom)
+  ) |>
+  st_transform(crs = aea_custom)
 
 ggplot() +
   geom_sf(data = nstock, col = "blue", 
@@ -496,10 +496,10 @@ mle-mvn is simulation-based. If you run that exact line of code twice, you will 
 # Adjust scale and spatial defs for residual plots
 #------------------------------------------------------------------------
 
-Summer.dat.sf <- Summer.dat %>%
+Summer.dat.sf <- Summer.dat |>
   mutate(X_m = X*1000,
-         Y_m = Y*1000) %>%
-  st_as_sf(., coords = c("X_m","Y_m"), crs = aea_custom)
+         Y_m = Y*1000) |>
+  st_as_sf(coords = c("X_m","Y_m"), crs = aea_custom)
           
 #------------------------------------------------------------------------
 # For Histogram of season 2: Model Component 1
@@ -707,7 +707,7 @@ ggsave2(
 Summer.dat.sf$resids2 <- residuals(deltalognormal.loglink.reml, 
                                      type = "mle-mvn", model = 2)
 
-positive_catches_sf <- Summer.dat.sf %>% 
+positive_catches_sf <- Summer.dat.sf |> 
   filter(!is.na(resids2))
 
 Summer.residuals.m2<-
@@ -830,7 +830,7 @@ ggplot() +
 # View(TwoLenBin200.dat)
 
 # Try parsing both position 3 AND position 6, taking whichever works
-Summer.dat_clean <- Summer.dat %>%
+Summer.dat_clean <- Summer.dat |>
   mutate(
     str_pos3 = str_split_fixed(keys, pattern = "_", 7)[, 3],
     str_pos6 = str_split_fixed(keys, pattern = "_", 7)[, 6],
@@ -854,7 +854,7 @@ grid_sf_centers <- st_as_sf(data_with_coords,
                             remove = F) # Maintains centroid structure
 
 # Optional: Add an explicit unique cell ID for bulletproof tracking
-grid_sf_centers <- grid_sf_centers %>%
+grid_sf_centers <- grid_sf_centers |>
   mutate(cell_id = row_number())
 
 # Replicate spatial points across years
@@ -865,8 +865,8 @@ grid_sf_df <- sdmTMB::replicate_df(
 )
 
 # Re-assign sf class lost during replication and create 10km x 10km square buffers
-grid_sf_polys <- grid_sf_df %>%
-  st_as_sf(crs = aea_custom) %>%
+grid_sf_polys <- grid_sf_df |>
+  st_as_sf(crs = aea_custom) |>
   st_buffer(dist = 5000, endCapStyle = "SQUARE")
  
 ggplot() +
@@ -912,7 +912,7 @@ extract_summer_mld <- function(f, all_polys, target_months) {
   file_year <- as.numeric(regmatches(basename(f), regexpr("[0-9]{4}", basename(f))))
   
   # Filter grid polygons for THIS specific year
-  year_polys <- all_polys %>% filter(Year == file_year)
+  year_polys <- all_polys |> filter(Year == file_year)
   if (nrow(year_polys) == 0) return(NULL)
   
   # Load ROMS raster
@@ -942,8 +942,8 @@ extract_summer_mld <- function(f, all_polys, target_months) {
   mld_vals <- exactextractr::exact_extract(r_summer_mean, year_polys, 'mean', progress = FALSE)
   
   # Return tabular data with spatial join identifiers
-  out <- year_polys %>%
-    #st_drop_geometry() %>%
+  out <- year_polys |>
+    #st_drop_geometry() |>
     mutate(
       mean_mld_m = mld_vals,
       source_file = basename(f)
@@ -990,7 +990,7 @@ ggplot() +
   facet_wrap(~Year, ncol = 5) + 
   theme_bw()
 
-mld_grid_table_final <- mld_grid_table %>%
+mld_grid_table_final <- mld_grid_table |>
   st_drop_geometry() # Geometry drops, but X, Y, cell_id, Year remain!
   
 ```
@@ -1004,12 +1004,12 @@ s2.grid.yr <- replicate_df(data_with_coords, ("Year"),
                            unique(Summer.dat$Year))
                   
 # Safely join MLD by X, Y, and Year
-s2.grid.yr <- s2.grid.yr %>%
+s2.grid.yr <- s2.grid.yr |>
   left_join(
-    mld_grid_table_final %>% 
+    mld_grid_table_final |> 
       select(X, Y, Year, mean_mld_m), 
     by = c("X", "Y", "Year")
-  ) %>%
+  ) |>
   mutate(
     YearSeas = paste0(Year,"Summer"),
     YearSeas.nm = as.numeric(paste0(Year,".1")),
@@ -1022,7 +1022,7 @@ s2.grid.yr <- s2.grid.yr %>%
     # 1 unit effort in the model
     LogArea = 0,
     # Area of 10 km x 10 km grid cell in m^2
-    cell_area_m2   = 100*1e6,
+    cell_area_m2 = 100*1e6,
     # Calculate volume in m^3 for index integration
     cell_volume_m3_time_varyingMLD = cell_area_m2 * mean_mld_m,
     # Calculate volume in m^3 for index integration
@@ -1036,7 +1036,7 @@ plan(sequential)
 gc()
 
 # 1. Filter out land cells where MLD or volume is NA / NaN
-s2.grid.water <- s2.grid.yr %>%
+s2.grid.water <- s2.grid.yr |>
   filter(
     !is.na(mean_mld_m), 
     !is.nan(mean_mld_m),
@@ -1044,9 +1044,9 @@ s2.grid.water <- s2.grid.yr %>%
     !is.nan(cell_volume_m3_time_varyingMLD),
     !is.na(cell_volume_m3_time_mean_MLD),
     !is.nan(cell_volume_m3_time_mean_MLD)
-  ) %>%
+  ) |>
   # 2. Also drop NAs for any other environmental covariates used in your model formula
-  # e.g., filter(!is.na(depth), !is.na(temp)) %>%
+  # e.g., filter(!is.na(depth), !is.na(temp)) |>
   as.data.frame()
 
 # Verify how many ocean cells remain vs total grid cells
@@ -1149,7 +1149,7 @@ summary(index$se)
 index.save.is.made = T
 
 if (index.save.is.made == F){
-  index.save <- index %>%
+  index.save <- index |>
     mutate(Area = "Global",
            Year = substr(YearSeas.nm, 1,4),
            Model = "DeltaLognormalFullBaseModel",
@@ -1158,7 +1158,7 @@ if (index.save.is.made == F){
            Seas = "Summer",
            Data = "DFO+NewNOAARepositoryData",
            Error = "iid"
-           ) %>%
+           ) |>
     select(-YearSeas.nm)
   
   fwrite(index.save, here("Final.Results", 
@@ -2231,7 +2231,7 @@ for (y_idx in seq_along(years)) {
 colnames(Summer.pred.no.imputations$data)
 
 # If none exist, use the following:
-Summer.pred_obj2 <- Summer.pred_obj %>%
+Summer.pred_obj2 <- Summer.pred_obj |>
   # apply the inverse logit function "plogis"
   ## and the inverse log function "exp"
   mutate(estComb = plogis(est1) * exp(est2))
@@ -2388,8 +2388,8 @@ for (yr in years) {
   message("Calculating COG for Year: ", yr)
     
   # 1. Subset grid for THIS year AND set the specific covariate level
-  grid_chunk <- s2.grid.water %>% 
-    filter(Year == yr) %>% 
+  grid_chunk <- s2.grid.water |> 
+    filter(Year == yr) |> 
     as.data.frame()
     
   # 2. Run predict on the SINGLE year chunk
@@ -2466,7 +2466,7 @@ ggsave(
 # Step 1: Calculate Map Bounding Box (Auto-Zoom to Trajectory)
 # -------------------------------------------------------------------
 # Create scaled coordinates in meters
-cog_m <- final_cog %>% 
+cog_m <- final_cog |> 
   mutate(x_m = est_x * 1000, y_m = est_y * 1000)
 
 # Add a 50 km (50,000 m) buffer around your COG points
@@ -2574,8 +2574,8 @@ for (yr in years) {
   message("Calculating EAO for Year: ", yr)
     
   # 1. Subset grid for THIS year AND set the specific covariate level
-  grid_chunk <- s2.grid.water %>% 
-    filter(Year == yr) %>% 
+  grid_chunk <- s2.grid.water |> 
+    filter(Year == yr) |> 
     as.data.frame()
     
   # 2. Run predict on the SINGLE year chunk
@@ -2627,11 +2627,11 @@ final_eao <- fread(here(new_directory_path2, "effectiveareaoccupied.fullModel.cs
 ```{r, cog_vs_eao}
 
 # 1. Prep COG Northing (Y coordinate)
-cog_y <- final_cog %>% 
+cog_y <- final_cog |> 
   select(Year, est_cog = est_y, lwr_cog = lwr_y, upr_cog = upr_y)
 
 # 2. Prep EAO
-eao_clean <- final_eao %>% 
+eao_clean <- final_eao |> 
   select(Year, est_eao = est, lwr_eao = lwr, upr_eao = upr)
 
 # 3. Panel 1: Center of Gravity (Northing / Y)
@@ -2679,7 +2679,7 @@ ggsave(
 #-----------------------------------------
 
 # Create scaled coordinates in meters
-cog_m <- final_cog %>% 
+cog_m <- final_cog |> 
   mutate(x_m = est_x * 1000, y_m = est_y * 1000)
 
 # Add a 50 km (50,000 m) buffer around your COG points
@@ -2749,7 +2749,7 @@ p0 <- ggplot() +
 #-----------------------------------------
 
 # Prep COG Northing (Y coordinate)
-cog_y <- final_cog %>% 
+cog_y <- final_cog |> 
   select(Year, est_cog = est_y, lwr_cog = lwr_y, upr_cog = upr_y)
 
 # Panel 1: Center of Gravity (Northing / Y)
@@ -2769,7 +2769,7 @@ p1 <- ggplot(cog_y, aes(x = Year, y = est_cog)) +
 #-----------------------------------------
 
 # Prep EAO
-eao_clean <- final_eao %>% 
+eao_clean <- final_eao |> 
   select(Year, est_eao = est, lwr_eao = lwr, upr_eao = upr)
 
 # Panel 2: Effective Area Occupied (EAO)
@@ -2850,7 +2850,7 @@ Role: Uses *CV* of spatial indices to measure dynamic range expansion/contractio
 ```{r, eao.analyses.additional.stats}
 
 # For understanding baseline and percent changes (gives direction)
-final_eao_summary <- final_eao %>%
+final_eao_summary <- final_eao |>
   mutate(
     baseline = mean(est),
     pct_change = ((est - baseline) / baseline) * 100,
@@ -2864,15 +2864,15 @@ fwrite(final_eao_summary, here(new_directory_path2, "effectiveareaoccupied.basel
        sep = ",")
 
 ## For volatility by size and blob event
-cv_by_regime <- final_eao %>%
+cv_by_regime <- final_eao |>
   mutate(
     regime = case_when(
       Year < 2014 ~ "Pre-Blob",
       Year %in% 2014:2016 ~ "Blob",
       Year > 2016 ~ "Post-Blob"
     )
-  ) %>%
-  group_by(regime) %>%
+  ) |>
+  group_by(regime) |>
   summarize(
     mean_evo = mean(est),
     sd_evo   = sd(est),
@@ -2908,7 +2908,7 @@ df <- data.frame(lon = -134.1163, lat = 42.5)
 # Convert to sf object (WGS84)
 sf_wgs84 <- st_as_sf(df, coords = c("lon", "lat"), crs = 4326)
 
-CapeBlanco <- sf_wgs84 %>% st_transform(crs = aea_custom)
+CapeBlanco <- sf_wgs84 |> st_transform(crs = aea_custom)
 CapeBlanco.aea_custom <- CapeBlanco$geometry[[1]][2]
 #------------------------------------------------------------------------
 # For Northern Boundary (Cape Blanco, OR and above)
@@ -3080,7 +3080,7 @@ index.NorthArea.save.is.made = T
 
 if (index.NorthArea.save.is.made == F){
   
-  index.NorthArea.save <- index.NorthArea %>%
+  index.NorthArea.save <- index.NorthArea |>
     mutate(Area = "North",
            Year = substr(YearSeas.nm, 1,4),
            Model = "finalBaseModel",
@@ -3088,7 +3088,7 @@ if (index.NorthArea.save.is.made == F){
            Seas = "Summer",
            Data = "DFO+NewNOAARepositoryData",
            Error = "iid"
-           ) %>%
+           ) |>
     select(-YearSeas.nm)
 
   fwrite(index.NorthArea.save, here("Final.Results", 
@@ -3215,7 +3215,7 @@ index.SouthArea.save.is.made = T
 
 if (index.SouthArea.save.is.made == F){
   
-  index.SouthArea.save <- index.SouthArea %>%
+  index.SouthArea.save <- index.SouthArea |>
     mutate(Area = "South",
            Year = substr(YearSeas.nm, 1,4),
            Model = "finalBaseModel",
@@ -3223,7 +3223,7 @@ if (index.SouthArea.save.is.made == F){
            Seas = "Summer",
            Data = "DFO+NewNOAARepositoryData",
            Error = "iid"
-           ) %>%
+           ) |>
     select(-YearSeas.nm)
 
   fwrite(index.SouthArea.save, here("Final.Results", 

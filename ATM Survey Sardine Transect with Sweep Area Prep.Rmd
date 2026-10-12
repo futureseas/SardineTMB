@@ -34,6 +34,8 @@ source(here(dir,"functions.R"))
 
 ```
 
+!!! Note years and summary values may differ due to NOAA database updates!!!
+
 # Create data folder if not already made
 
 ```{r, create data directory}
@@ -646,7 +648,7 @@ suntimes <- PreAbs2 |>
   st_drop_geometry()
 
 dim(suntimes)
-# [1] 2006  3
+# [1] 2110  3
 
 # Plan parallel execution (adjust workers if needed)
 plan(multisession)
@@ -690,7 +692,7 @@ head(sun_times$sunrise_pacific)
 head(sun_times$sunset_pacific)
 
 dim(sun_times)
-# [1] 2006   5
+# [1] 2110   5
 
 # Add sun_times to original data set
 area.transects <- inner_join(PreAbs2, sun_times, 
@@ -699,7 +701,7 @@ area.transects <- inner_join(PreAbs2, sun_times,
 # View(area.transects)  
 
 dim(area.transects)
-# [1] 21347    50
+# [1] 21606    50
 
 # Double check values
 unique(is.na(area.transects))
@@ -741,7 +743,7 @@ area.transects.final <- rbind(area.transects.d,
          sunset_pacific = as.character(sunset_pacific))
 
 dim(area.transects.final)
-# [1] 21347  51
+# [1] 21606  49
 
 # View(area.transects.final)
 
@@ -761,14 +763,14 @@ Note that you the code above returns an IDate column for date and needs converte
 st_crs(PreAbs2)
 
 dim(PreAbs2)
-# 1] 21347  48
+# 1] 21606  46
 
 # Check output
 head(sun_times$sunrise_pacific)
 head(sun_times$sunset_pacific)
 
 dim(sun_times)
-# [1] 2006   5
+# [1] 2110   5
 
 # Add sun_times to original data set
 area.transects <- inner_join(PreAbs2, sun_times, 
@@ -777,7 +779,7 @@ area.transects <- inner_join(PreAbs2, sun_times,
 # View(area.transects)  
 
 dim(area.transects)
-# [1] 21347    50
+# [1] 21606    50
 
 # Double check values
 unique(is.na(area.transects))
@@ -819,7 +821,7 @@ area.transects.final <- rbind(area.transects.d,
          sunset_pacific = as.character(sunset_pacific))
 
 dim(area.transects.final)
-# [1] 21347  51
+# [1] 21606  49
 
 # View(area.transects.final)
   
@@ -925,7 +927,7 @@ range(test.2008$dist.trvl.m)
 ```{r, ships.present}
 
 # Find unique ships
-unique(area.transects.final.cln2$ship)
+sort(unique(area.transects.final.cln2$ship))
 # [1] "RL" "FR" "LB" "SH" "OS" "JD" "OD" "MF"
 
 # OD = Oscar Dyson

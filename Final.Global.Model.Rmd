@@ -95,7 +95,7 @@ unique(Season.2.dat.w.folds$.folds)
 # [1] 2 3 1 5 4
 # Levels: 1 2 3 4 5
 
-sampFolds <- Season.2.dat.w.folds %>% group_by(.folds) %>% summarise(n = n()) 
+sampFolds <- Season.2.dat.w.folds |> group_by(.folds) |> summarise(n = n()) 
 sampFolds
 # .folds<fctr>  n<int>
 #            1	   566			
@@ -104,7 +104,7 @@ sampFolds
 #            4	   570			
 #            5	   571	
 
-Zeros <- Season.2.dat.w.folds %>%
+Zeros <- Season.2.dat.w.folds |>
   filter(Total_W == 0)
 
 propZeros <- nrow(Zeros)/nrow(Season.2.dat.w.folds)
@@ -237,17 +237,17 @@ summary_df <- imap_dfr(all_results, ~get_metrics(.x, .y))
 # 3. Post-Process: Apply Fixed Delta Logic and Hierarchical Ordering
 # ====================================================================
 
-model_decision_table <- summary_df %>%
+model_decision_table <- summary_df |>
   # Structural hierarchy layout (Suite -> Model -> Sanity Info -> Total ELPD)
   select(
     Suite, Model, 
     `Main Sanity`, `CV Sanity`, `Folds Passed`, 
     `Total ELPD`, 
     everything() 
-    ) %>%
+    ) |>
   
   # Calculate relative DELTA ELPD grouped by Suite
-  group_by(Suite) %>%
+  group_by(Suite) |>
   mutate(
     # Condition: Row must pass both sanity tests and have valid ELPD data
     is_valid_baseline = `Main Sanity` == "Pass" & `CV Sanity` == "OK" & 
@@ -262,12 +262,12 @@ model_decision_table <- summary_df %>%
     
     # Compute Delta (The top model outputs 0, inferior models output negative values)
     `DELTA ELPD` = round(`Total ELPD` - baseline_elpd, 2)
-    ) %>%
-  ungroup() %>%
+    ) |>
+  ungroup() |>
   
   # Drop calculation columns and position DELTA ELPD next to Total ELPD
-  select(-is_valid_baseline, -baseline_elpd) %>%
-  relocate(`DELTA ELPD`, .after = `Total ELPD`) %>%
+  select(-is_valid_baseline, -baseline_elpd) |>
+  relocate(`DELTA ELPD`, .after = `Total ELPD`) |>
   
   # Sorting: Sort by Suite, then arrange by Delta descending 
   # This places your 0-valued best model at the top of each suite.
@@ -335,8 +335,8 @@ r_aggr_42.5 <- DHARMa::recalculateResiduals(r_fit_42.5,
                                             group = interaction(Season.2.dat.w.folds$X,
                                                                 Season.2.dat.w.folds$Y))
 ## 2. Get the unique coordinates that match the aggregated residuals
-coords_unique <- Season.2.dat.w.folds %>%
-  group_by(X, Y) %>%
+coords_unique <- Season.2.dat.w.folds |>
+  group_by(X, Y) |>
   summarize(.groups = "drop")
 ## 3. Run the test
 DHARMa::testSpatialAutocorrelation(r_aggr_42.5, 
