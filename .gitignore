@@ -23,6 +23,7 @@ Data/
 dropped.functions.R #(original code backuped to other drive) 
 dropped.code.and.data.calls.R #(original code backuped to other drive) 
 file.comparision.R #(might be lost since it was on the corrupt drive)
+FileComparisons.R
 
 #--------------------------------------
 # File is too large (EEZ boundary)
