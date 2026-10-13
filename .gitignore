@@ -11,24 +11,13 @@ shared/
 #--------------------------------------
 # Remove in-house assessment of indices
 #--------------------------------------
-AcousticIndex.vs.sdmTMBIndex.Rmd #(might be lost since it was on the corrupt drive)
-oldIPES.and.Canadian.Data.V3.Rmd #(might be lost since it was on the corrupt drive)
+AcousticIndex.vs.sdmTMBIndex.Rmd 
 
 #--------------------------------------
 #  Remove data Old data and functions
 #--------------------------------------
-Data/ATM CPS Survey/Scratch/ 
-Data/Shapefiles/Scratch/
-Data/
-dropped.functions.R #(original code backuped to other drive) 
-dropped.code.and.data.calls.R #(original code backuped to other drive) 
-file.comparision.R #(might be lost since it was on the corrupt drive)
+Data/ATM CPS Survey
 FileComparisons.R
-
-#--------------------------------------
-# File is too large (EEZ boundary)
-#--------------------------------------
-Data/Shapefiles/gshhg-shp-2.3.7*
 
 #--------------------------------------
 # ROMS hindcast data sets (100MiB limit exceeded)
@@ -42,7 +31,6 @@ CDO-Ubuntu20.04/target_10km_grid.txt
 # Code outputs
 #--------------------------------------
 Final.Figures/
-Data/Shapefiles/
 *.jpg
 *.rds
 *.png
@@ -52,27 +40,3 @@ Data/Shapefiles/
 # Non ownership data and / or restricted 
 # --------------------------------------
 Data/IPES plus Historic Surveys Canada/
-IPES.and.Canadian.Data.Rmd
-cdo-2.5.3.tar.gz
-FSIII SDM Extraction Codes to Check/
-ExampleRun/
-SSMSE.Base.Model.Data/
-Sources/
-
-#--------------------------------------
-# Version control software
-#--------------------------------------
-bfg-1.15.0.jar
-
-#--------------------------------------
-# Notes, Presentations, and Test code
-#--------------------------------------
-Scratch/ #(might be lost since it was on the corrupt drive)
-Final.Figures/Scratch/ #(might be lost since it was on the corrupt drive)
-Final.Results/Scratch/ #(might be lost since it was on the corrupt drive)
-Final.Model.Scripts/Scratch/ #(might be lost since it was on the corrupt drive)
-PastPresentations/ 
-Notes/
-*.pptx
-*.odp
-*.ods
