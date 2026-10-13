@@ -78,9 +78,9 @@ haul_catch_data <- read_csv(
     haulBackTime    = col_character(),
     
     # Other columns
-    cruise                  = col_integer(),
+    cruise                  = col_character(),
     ship                    = col_character(),
-    haul                    = col_integer(),
+    haul                    = col_character(),
     collection              = col_integer(),
     startLatitude           = col_double(),
     startLongitude          = col_double(),
@@ -209,9 +209,9 @@ haul_specimen_data <- read_csv(
     Time = col_character(),
     
     # Other columns
-    cruise                  = col_integer(),
+    cruise                  = col_character(),
     ship                    = col_character(),
-    haul                    = col_integer(),
+    haul                    = col_character(),
     collection              = col_integer(),
     Latitude                = col_double(),
     Longitude               = col_double(),
@@ -465,7 +465,7 @@ dim(match.keys)
 # Join with adjusted 
 # sardine.subsample.weights.fin
 #-------------------------------
-Haul.weights.sar <- rbind(Haul.weights.sar, 
+Haul.weights.sar <- bind_rows(Haul.weights.sar, 
                           no.sardine.subsample.weights.fin
                           ) |>
   # Make sure they are unique
@@ -1028,7 +1028,7 @@ Haul.weights.sar.remaining.2.test.resolved.fin <-
 
 
 US.specimen.dat.clean <-
-  rbind(
+  bind_rows(
     Haul.weights.sar.clean2.fin,
     extra.specimens.resolved.ok.fin,
     extra.specimens.cont.resolved.fin,

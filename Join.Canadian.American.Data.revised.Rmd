@@ -66,6 +66,7 @@ dim(us.dat.2003.2005)
 # [1] 3910   58
 dim(distinct(us.dat.2003.2005))
 # [1] 3910   58
+str(us.dat.2003.2005)
 
 us.dat.2006.2010 <- 
    fread(here(dir, "Data", "ATM CPS Survey",
@@ -75,15 +76,17 @@ dim(us.dat.2006.2010)
 # [1] 3780   58
 dim(distinct(us.dat.2006.2010))
 # [1] 3780   58
+str(us.dat.2006.2010)
 
 us.dat.2011.2014 <- 
-   read_sf(here(dir, "Data", "ATM CPS Survey",
-                "area.transects.final.2011.2014.csv"))
+   fread(here(dir, "Data", "ATM CPS Survey",
+              "area.transects.final.2011.2014.csv"))
 # View(us.dat.2011.2014)
 dim(us.dat.2011.2014)
 # [1] 3826   58
 dim(distinct(us.dat.2011.2014))
 # [1] 3826   58
+str(us.dat.2011.2014)
 
 us.dat.2015.2020 <- 
    fread(here(dir, "Data", "ATM CPS Survey",
@@ -93,6 +96,7 @@ dim(us.dat.2015.2020)
 # [1] 6201   58
 dim(distinct(us.dat.2015.2020))
 # [1] 6201   58
+str(us.dat.2015.2020)
 
 us.dat.2021.2023 <- 
    fread(here(dir, "Data", "ATM CPS Survey",
@@ -102,6 +106,7 @@ dim(us.dat.2021.2023)
 # [1] 2424   58
 dim(distinct(us.dat.2021.2023))
 # [1] 2424   58
+str(us.dat.2021.2023)
 
 us.dat.2024.2025 <- 
    fread(here(dir, "Data", "ATM CPS Survey",
@@ -111,18 +116,19 @@ dim(us.dat.2024.2025)
 # [1] 1069   58
 dim(distinct(us.dat.2024.2025))
 # [1] 1069   58
+str(us.dat.2024.2025)
 
 # Join data sets
-full.us.dat <- bind_rows(#us.dat.2003.2005, us.dat.2006.2010,
+full.us.dat <- bind_rows(us.dat.2003.2005, us.dat.2006.2010,
                          us.dat.2011.2014, us.dat.2015.2020,
                          us.dat.2021.2023, us.dat.2024.2025) |>
   # Create country label
   mutate(Country = "USA")
 
 dim(full.us.dat)
-# [1] 21211    59
+# [1] 21210    59
 dim(distinct(full.us.dat))
-# [1] 21211    59
+# [1] 21210    59
 
 colnames(full.us.dat)
 #  [1] "cruise"                      "ship"                       
@@ -218,9 +224,9 @@ canadian.dat <-
   # Create country label
   mutate(Country = "Canada")
 dim(canadian.dat)
-# [1] 43800    41
+# [1] 50784  41
 dim(distinct(canadian.dat))
-# [1] 43800    41
+# [1] 50784  41
 
 canadian.dat.short <- canadian.dat |>
   select(keys, Year, Season, Country, Species_weight, len.bin, Bin_Haul_Biomass, 
@@ -289,11 +295,24 @@ full.dat2 <- full.dat |>
 # View(full.dat2)
 
 dim(full.dat2)
-# [1] 65011    21
+# [1] 71994    21
 dim(distinct(full.dat2))
-# [1] 43450    21
+# [1] 49760    21
 
 colnames(full.dat2)
+
+```
+
+# Create figure folder if not already made
+
+```{r, create data directory}
+
+
+figure.path <- "Final.Figures"
+
+if (!dir.exists(figure.path)) {
+  dir.create(figure.path, recursive = TRUE)
+}
 
 ```
 
@@ -333,9 +352,9 @@ Hybrid.reweighting.w.correction.full.dat.summer <-
            !keys %in% borrowed.us.haul.comps$keys &
            !keys %in% borrowed.cad.haul.comps$keys
          ) |>
- ggplot(aes(x = standard_length, 
-            y = Bio_Weight_kg,
-            color = keys)) + # Move color inside aes()
+  ggplot(aes(x = standard_length, 
+             y = Bio_Weight_kg,
+             color = keys)) + # Move color inside aes()
   geom_point(alpha = 0.5) + # Alpha helps see overlapping points
   theme_minimal() +
   theme(legend.position = "none") + # Hides the massive legend
@@ -348,7 +367,7 @@ Hybrid.reweighting.w.correction.full.dat.summer
 ggsave2(
    filename="Hybrid.reweighting.w.correction.full.dat.summer.jpeg",
    plot=Hybrid.reweighting.w.correction.full.dat.summer, device="jpeg", 
-   path=here(dir, "Final.Figures"),
+   path=here(dir, figure.path),
    dpi=1200, width = 29, height=21, unit="cm", limitsize = FALSE)
 
 #---------------------------------------------------------------
@@ -386,7 +405,7 @@ Hybrid.reweighting.w.correction.full.dat.spring
 ggsave2(
    filename="Hybrid.reweighting.w.correction.full.dat.spring.jpeg",
    plot=Hybrid.reweighting.w.correction.full.dat.spring, device="jpeg", 
-   path=here(dir, "Final.Figures"),
+   path=here(dir, figure.path),
    dpi=1200, width = 29, height=21, unit="cm", limitsize = FALSE)
 
 #---------------------------------------------------------------
@@ -435,7 +454,7 @@ scaled.reweighting.w.correction.full.dat.summer
 ggsave2(
   filename="scaled.reweighting.w.correction.full.dat.summer.jpeg",
   plot=scaled.reweighting.w.correction.full.dat.summer, device="jpeg", 
-  path=here(dir, "Final.Figures"),
+  path=here(dir, figure.path),
   dpi=1200, width = 29, height=21,  
   unit="cm", limitsize = FALSE)
 
@@ -485,7 +504,7 @@ scaled.reweighting.w.correction.full.dat.spring
 ggsave2(
   filename="scaled.reweighting.w.correction.full.dat.spring.jpeg",
   plot=scaled.reweighting.w.correction.full.dat.spring, device="jpeg", 
-  path=here(dir, "Final.Figures"),
+  path=here(dir, figure.path),
   dpi=1200, width = 29, height=21,  
   unit="cm", limitsize = FALSE)
 
@@ -586,7 +605,13 @@ all_levels2 <- sort(unique(c(TwoSeas.dat$YearSeas.nm, missing_seas$YearSeas.nm))
 est.missing.time2 <- unique(missing_seas$YearSeas.nm) |>
   sort()
 
-save(est.missing.time2, file = here(dir, "Data", "ExampleRun",
+path.missing.time <- "Data/ExampleRun"
+
+if (!dir.exists(path.missing.time)) {
+  dir.create(path.missing.time, recursive = TRUE)
+}
+
+save(est.missing.time2, file = here(dir, path.missing.time,
                                     "est.missing.time2.rda"))
 
 ```
@@ -626,106 +651,6 @@ range(TwoSeas.dat2$Y)
 
 ```
 
-## Construct the Seasonal Mesh: 
-
-### Load coastline
-
-```{r, load.coastal.geometries}
-
-# 1. Direct GitHub URL for the Shapefile ZIP
-url <- "https://github.com/GenericMappingTools/gshhg-gmt/releases/download/2.3.7/gshhg-shp-2.3.7.zip"
-
-# 2. Set up temporary file paths
-zip_path <- tempfile(fileext = ".zip")
-ex_dir <- tempdir()
-
-# 3. Download the archive (mode = "wb" prevents binary corruption on Windows)
-download.file(url, destfile = zip_path, mode = "wb")
-
-# 4. Unzip
-unzip(zip_path, exdir = ex_dir)
-
-# 5. Read into R with 'sf'
-# Resolutions: 'f' (full), 'h' (high), 'i' (intermediate), 'l' (low), 'c' (crude)
-shp_path <- file.path(ex_dir, "GSHHS_shp", "f", "GSHHS_f_L1.shp")
-coastline <- st_read(shp_path)
-
-# 6. Verify plot
-plot(st_geometry(coastline))
-
-# 7. Define boundaries - previously derived from the full us data 
-# (all seasons and years 2003 to 2024) with 100 m buffer around transects
-## Note that this was done on an older data set that is no longer available so will be updated in the next
-## iteration
-bbox_vec <- c(xmin = -581615.7, ymin = -1218974.1, xmax = 949523.9, ymax = 1634799.5)
-
-# 7. Crop to study area
-coastline.clip <- coastline |>
-  st_transform(crs = st_crs(aea_custom)) |>
-  ### Trim to area extent
-  st_crop(bbox_vec)
-
-```
-
-### Create Barrier Mesh
-
-```{r, construct.barrier.mesh}
-
-# Filter the data frame
-TwoSeas.dat_filtered <- 
-  TwoSeas.dat2[TwoSeas.dat2$X >= min(TwoSeas.dat2$X) & 
-                 TwoSeas.dat2$X <= max(TwoSeas.dat2$X) & 
-                 TwoSeas.dat2$Y >= min(TwoSeas.dat2$Y) & 
-                 TwoSeas.dat2$Y <= max(TwoSeas.dat2$Y), ]
-
-# Cutoff values control the minimum distance between knots.
-## It is generally better to start with a coarser mesh (larger cutoff)
-## However there is a tradeoff on spatial predictability (more knots) and
-## over fitting the time to process. If the day is irregularly distributed
-## you can also try residual-based knot placement
-meshTwoSeas.dat_filtered <- make_mesh(TwoSeas.dat_filtered, 
-                                       xy_cols = c("X", "Y"), 
-                                       cutoff = 20) 
-
-# Check number of mesh nodes 
-## If greater than >1,000–2,000 nodes, 
-## you’re likely in trouble unless you have a lot of RAM.
-length(meshTwoSeas.dat_filtered$mesh$loc[,1])
-# [1] 594
-
-plot(meshTwoSeas.dat_filtered)
-points(TwoSeas.dat_filtered$X, TwoSeas.dat_filtered$Y, col = "red", pch = 19, 
-       cex = 0.2) 
-
-# proj_scaling should match units of (since we are working in m, but density
-# is in km, divide by 1000)
-barrier2 <- sdmTMBextra::add_barrier_mesh(meshTwoSeas.dat_filtered, coastline.clip, proj_scaling = 1000)
-
-## If greater than >1,000–2,000 nodes, 
-## you’re likely in trouble unless you have a lot of RAM.
-length(barrier2$mesh$loc[,1])
-# [1] 594
-
-# Example plot code from ?add_barrier_mesh
-mesh_df_water2 <- barrier2$mesh_sf[barrier2$normal_triangles, ]
-mesh_df_land2 <- barrier2$mesh_sf[barrier2$barrier_triangles, ]
-
-Mesh.with.barrier2 <-
-ggplot() +
-  geom_sf(data = coastline.clip) +
-  geom_sf(data = mesh_df_water2, size = 1, colour = "blue") +
-  geom_sf(data = mesh_df_land2, size = 1, colour = "green")
-
-Mesh.with.barrier2
-
-plot(meshTwoSeas.dat_filtered)
-points(TwoSeas.dat_filtered$X, TwoSeas.dat_filtered$Y, col = "red", pch = 19, 
-       cex = 0.2) 
-
-plot(st_geometry(coastline.clip))
-
-```
-
 ## Plot trend with by haul
 
 ```{r, general trend}
@@ -733,6 +658,13 @@ plot(st_geometry(coastline.clip))
 #------------------------------------------------------
 # Sum over year, season, and country
 #------------------------------------------------------
+
+# Filter the data frame
+TwoSeas.dat_filtered <- 
+  TwoSeas.dat2[TwoSeas.dat2$X >= min(TwoSeas.dat2$X) & 
+                 TwoSeas.dat2$X <= max(TwoSeas.dat2$X) & 
+                 TwoSeas.dat2$Y >= min(TwoSeas.dat2$Y) & 
+                 TwoSeas.dat2$Y <= max(TwoSeas.dat2$Y), ]
 
 TwoSeas.dat_filtered.test <- TwoSeas.dat_filtered |>
   group_by(Year, Season, keys) |>
@@ -769,7 +701,7 @@ trend.check
 
 ggsave2(filename="S2.trend.check.w.integrated.Canadian.dat.wght.only.jpeg",
         plot=trend.check, device="jpeg", 
-        path=here(dir, "Final.Figures"), dpi=1200, width = 29, height=21, 
+        path=here(dir, figure.path), dpi=1200, width = 29, height=21, 
         unit="cm", limitsize = FALSE)
 
 ```
@@ -817,7 +749,7 @@ trend.check2
 
 ggsave2(filename="S2.trend.check.by.country.w.integrated.Canadian.dat.wght.only.jpeg",
         plot=trend.check2, device="jpeg", 
-        path=here(dir, "Final.Figures"), dpi=1200, width = 29, height=21, 
+        path=here(dir, figure.path), dpi=1200, width = 29, height=21, 
         unit="cm", limitsize = FALSE)
 
 ```
@@ -868,8 +800,8 @@ us_eez <- us_eez |>
 plot(st_geometry(us_eez))
 eez.lat.limits <- st_bbox(us_eez)
 eez.lat.limits
-#       xmin       ymin       xmax       ymax 
-# -129.23483   30.54200 -117.09162   49.00226
+#       xmin       ymin     xmax         ymax 
+##      -129.23483 30.54200 -117.09162   49
 
 ```
 
@@ -881,7 +813,7 @@ Next, create boundaries
 # Create stock boundary limits
 #------------------------------------------------------
 
-# Create point sf 
+# Create point sf for Cape Mendocino and Point Conception CA
 limits <- data.frame(
   X = c(-124.06946, -120.47072),
   Y = c(40.02236, 34.44872)
@@ -890,7 +822,7 @@ limits <- data.frame(
 limits.sf <- st_as_sf(limits, coords = c("X", "Y"), crs = 4326) |>
   st_transform(crs = aea_custom)
 
-# Create northern stock boundary (Westernmost Point, CA)
+# Create northern stock boundary (Cape Mendocino, CA)
 nstock <- st_coordinates(limits.sf)[1,2]/1000
 
 # Create southern stock boundary (Point Conception, CA)
@@ -974,7 +906,7 @@ trend.check3
 
 ggsave2(filename="S2.trend.check.by.latBin.w.integrated.Canadian.dat.wght.only.jpeg",
         plot=trend.check3, device="jpeg", 
-        path=here(dir, "Final.Figures"), dpi=1200, width = 29, height=21, 
+        path=here(dir, figure.path), dpi=1200, width = 29, height=21, 
         unit="cm", limitsize = FALSE)
 
 ```
@@ -1030,10 +962,10 @@ TwoSeas.dat_filtered.Binned <- rbind(TwoSeas.dat_filtered.south,
 #------------------------------------------------------
 
 dim(TwoSeas.dat)
-# [1] 24223    24
+# [1] 24222    24
 
 dim(TwoSeas.dat_filtered.Binned)
-# [1] 24223    29
+# [1] 24222    29
 
 unique(is.na(TwoSeas.dat_filtered.Binned))
 
@@ -1042,99 +974,23 @@ fwrite(TwoSeas.dat_filtered.Binned,
 
 ```
 
-## Run Some Rough Models
+# Create final results folder if not already made
 
-```{r, rough.models}
+```{r, create data directory}
 
-TwoSeas.dat_filtered.Binned.test <- TwoSeas.dat_filtered.Binned |>
-  group_by(Year, Season, latBin, keys, YearSeas.nm) |>
-  summarise(Haul.kg = round(sum(Scaled_Biomass_Contribution), 7),
-            Haul.check = first(Species_weight),
-            Fin_sweep.m3 = first(Fin_sweep.m3), .groups = "keep") |>
-  ungroup()
 
-test <- TwoSeas.dat_filtered.Binned.test |>
-  mutate(diff = Haul.kg - Haul.check)
+results.path <- "Final.Results"
 
-unique(test$diff)
-
-lm(Haul.kg ~ YearSeas.nm, 
-   data = TwoSeas.dat_filtered.Binned.test |> 
-     filter(Season == "Summer")) |> 
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
-
-lm(Haul.kg ~ latBin, 
-   data = TwoSeas.dat_filtered.Binned.test |> 
-     filter(Season == "Summer")) |>
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
-
-lm(Haul.kg ~ latBin + YearSeas.nm, 
-   data = TwoSeas.dat_filtered.Binned.test |> 
-     filter(Season == "Summer")) |> 
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
-
-lm(Haul.kg ~ latBin + YearSeas.nm, offset = log(Fin_sweep.m3), 
-   data = TwoSeas.dat_filtered.Binned.test |> 
-     filter(Season == "Summer")) |> 
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
-
-lm(Haul.kg ~ latBin, offset = log(Fin_sweep.m3), 
-   data = TwoSeas.dat_filtered.Binned.test |> 
-     filter(Season == "Summer")) |> 
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
-
-lm(Haul.kg ~ YearSeas.nm, offset = log(Fin_sweep.m3), 
-   data = TwoSeas.dat_filtered.Binned.test |>
-     filter(Season == "Summer")) |> 
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
-
-lm(Haul.kg ~ latBin + YearSeas.nm, offset = log(Fin_sweep.m3*30), 
-   data = TwoSeas.dat_filtered.Binned.test |> 
-     filter(Season == "Summer")) |>
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
-
-lm(Haul.kg ~ YearSeas.nm, offset = log(Fin_sweep.m3*30), 
-   data = TwoSeas.dat_filtered.Binned.test |> 
-     filter(Season == "Summer")) |>
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
-
-lm(Haul.kg ~ latBin, offset = log(Fin_sweep.m3*30), 
-   data = TwoSeas.dat_filtered.Binned.test |> 
-     filter(Season == "Summer")) |>
-  ggplot(aes(.fitted, .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0)+
-  labs(title='Residual vs. Fitted Values Plot', x='Fitted Values', y='Residuals')
+if (!dir.exists(results.path)) {
+  dir.create(results.path, recursive = TRUE)
+}
 
 ```
 
 # Create summary table
 
-```{r}
+```{r, summary.table.for.survey.observations.used}
+
 
 # 1. Prepare Spatial and Temporal Features
 TwoSeas.2008_2019.sf <- TwoSeas.dat_filtered.Binned |> 
@@ -1157,107 +1013,6 @@ TwoSeas.2008_2019.sf <- TwoSeas.dat_filtered.Binned |>
   
 unique(TwoSeas.2008_2019.sf$latBin)
 # [1] "SofMendocino"  "PNWUSA"  "Canada"  
-
-TwoSeas.2008_2019_prep.sf <- TwoSeas.2008_2019.sf |>
-  separate(date, into = c("Year_num", "Month", "Day"), remove = FALSE) |>
-  mutate(
-    Year = as.numeric(Year_num),
-    Month_num = as.numeric(Month),
-    Month_abb = month.abb[Month_num],
-    MonthDay_str = paste0(Month_abb, ". ", Day),
-    MonthDay_idx = as.numeric(paste0(Month, Day)),
-    CountryLatBin = paste(Country, " - ", latBin)
-  ) |>
-  group_by(Year, CountryLatBin, keys) |> 
-  mutate(
-    # Extract the lowest latitude from the transect key
-    minLAT = min(st_coordinates(geometry)[, "Y"]),
-    # Extract the greatest latitude from the transect key
-    maxLAT = max(st_coordinates(geometry)[, "Y"])
-    ) |>
-  ungroup() 
-
-
-# 2. Build Consolidated Summary Table
-TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf |>
-  st_drop_geometry() |>
-  group_by(Year, CountryLatBin) |>
-  summarise(
-    # Temporal range per bin
-    MonthDay = paste(
-      MonthDay_str[which.min(MonthDay_idx)], 
-      "-", 
-      MonthDay_str[which.max(MonthDay_idx)]
-    ),
-    
-    # Latitudinal range per bin
-    Latitudes = paste0(
-      format(round(min(minLAT, na.rm = TRUE), 2), nsmall = 2), 
-      " - ", 
-      format(round(max(maxLAT, na.rm = TRUE), 2), nsmall = 2)
-    ),
-    
-    # Haul Counts
-    `Total Hauls` = n_distinct(keys),
-    `Nb. Absent Hauls` = n_distinct(keys[scientific_name == "Other" | is.na(len.bin)]),
-    
-    # Catch & Biological Metrics (without duplication by haul key)
-    `Total Catch (kg)` = sum(
-      Species_weight[!duplicated(keys) & scientific_name != "Other" & !is.na(len.bin)], 
-      na.rm = TRUE
-    ),
-    `n sampled` = sum(
-      lenBin.nb[!duplicated(keys) & scientific_name != "Other" & !is.na(len.bin)], 
-      na.rm = TRUE
-    ),
-    `Length Bins (cm)` = {
-      # Clean out NAs, empty strings, and white spaces
-      clean_bins <- len.bin[scientific_name != "Other" & !is.na(len.bin) & trimws(len.bin) != ""]
-      
-      if (length(clean_bins) == 0) {
-        "None"
-        } else {
-          # Define custom level order
-          bin_order <- c("<15.0", "15.0-20.0", "20.0+")
-          
-          # Convert to factor with explicit order and sort
-          ordered_bins <- sort(factor(unique(clean_bins), levels = bin_order))
-          
-          # Collapse into string
-          paste(ordered_bins, collapse = " & ")
-          }
-      }
-    ) |>
-  ungroup() |>
-  select(
-    Year, MonthDay, `Country - Strata` = CountryLatBin, `Total Hauls`, `Nb. Absent Hauls`,
-    `Total Catch (kg)`, `Length Bins (cm)`, `n sampled`, Latitudes
-    )
-
-View(TwoSeas.2008_2019survey.dat)
-
-# 3. Save Output
-fwrite(TwoSeas.2008_2019survey.dat, here("Final.Results", "SummerSummaryTable.csv"))
-
-# Calculate dataset-wide summary statistics
-overall_stats <- TwoSeas.2008_2019survey.dat |>
-  summarise(
-    Total_Hauls       = sum(`Total Hauls`),
-    Absent_Hauls      = sum(`Nb. Absent Hauls`),
-    Present_Hauls     = sum(`Total Hauls`) - sum(`Nb. Absent Hauls`),
-    Percent_Zeros     = round((sum(`Nb. Absent Hauls`) / sum(`Total Hauls`)) * 100, 2),
-    Total_Fish_Sampled= sum(`n sampled`),
-    Total_Catch_kg    = sum(`Total Catch (kg)`),
-    Mean_Catch_kg     = round(mean(`Total Catch (kg)`[`Total Catch (kg)` > 0]), 2),
-    Median_Catch_kg   = round(median(`Total Catch (kg)`[`Total Catch (kg)` > 0]), 2),
-    Min_Catch_kg      = round(min(`Total Catch (kg)`[`Total Catch (kg)` > 0]), 2),
-    Max_Catch_kg      = round(max(`Total Catch (kg)`), 2)
-  )
-
-View(overall_stats)
-
-```
-```{r}
 
 # 1. Prepare Spatial and Temporal Features (with safer date indexing)
 TwoSeas.2008_2019_prep.sf <- TwoSeas.2008_2019.sf |>
@@ -1334,7 +1089,10 @@ TwoSeas.2008_2019survey.dat <- TwoSeas.2008_2019_prep.sf |>
     `Total Catch (kg)`, `Length Bins (cm)`, `n sampled`, Latitudes
   )
 
-View(TwoSeas.2008_2019survey.dat)
+# View(TwoSeas.2008_2019survey.dat)
+
+# Save results
+fwrite(TwoSeas.2008_2019survey.dat, here(dir, results.path, "SummerSummaryTable.csv"), sep = ",")
 
 ```
 

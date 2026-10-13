@@ -465,8 +465,10 @@ ncatt_put(nc, "crs", "proj4text", proj_string)
 
 ## X and Y Axis Attributes (CRITICAL for CDO)
 ncatt_put(nc, "x", "standard_name", "projection_x_coordinate")
+ncatt_put(nc, "x", "long_name", "Albers Equal Area Projected X coordinate")
 ncatt_put(nc, "x", "axis", "X")
 ncatt_put(nc, "y", "standard_name", "projection_y_coordinate")
+ncatt_put(nc, "y", "long_name", "Albers Equal Area Projected X coordinate")
 ncatt_put(nc, "y", "axis", "Y")
 
 ## Global Attributes

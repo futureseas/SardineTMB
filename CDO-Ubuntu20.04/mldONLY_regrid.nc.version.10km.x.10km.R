@@ -33,7 +33,7 @@ wkt_string <- target_crs$wkt                 # The WKT version (long and complex
 # --- End create CRS object
 
 # Create directory to save downloaded ROMS dataset
-ROMSpath <- "Data/ROMS2.testMixedInput"
+ROMSpath <- "Data/ROMS2"
   
   if (!dir.exists(ROMSpath)) {
   dir.create(ROMSpath, recursive = TRUE)
@@ -301,46 +301,37 @@ for (fl in fls) {
 
 # --- Create empty grid ---
 # 0. Setup Path and Projection ---
-## Define the file path FIRST so it's ready for Step 5
-target_grid_nc <- "target_10km_grid.nc"
+target_grid_nc  <- file.path(dir, "target_10km_grid.nc")
+target_grid_txt <- file.path(dir, "target_10km_grid.txt")
 
 # 1. Define Target Grid Space (10km)
-## We use meters because the target is Albers
 x_vals <- seq(from = floor(min_x/10000)*10000, to = ceiling(max_x/10000)*10000, by = 10000)
 y_vals <- seq(from = floor(min_y/10000)*10000, to = ceiling(max_y/10000)*10000, by = 10000)
 
-# 2. Calculate 2D Lat/Lon Matrices (The CDO Workaround)
-## This translates every X/Y meter point into a geographic degree point
+# 2. Calculate 2D Lat/Lon Matrices
 grid_df     <- expand.grid(x = x_vals, y = y_vals)
 grid_sf     <- st_as_sf(grid_df, coords = c("x", "y"), crs = target_crs)
 grid_wgs84  <- st_transform(grid_sf, 4326)
 coords      <- st_coordinates(grid_wgs84)
 
-## Reshape to 2D matrices for NetCDF
 lon_2d <- matrix(coords[,1], nrow = length(x_vals), ncol = length(y_vals))
 lat_2d <- matrix(coords[,2], nrow = length(x_vals), ncol = length(y_vals))
 
-# 3. Calculate 2D Corners (For Conservative Remapping)
-## Each cell has 4 corners: [bottom-left, bottom-right, top-right, top-left]
+# 3. Calculate 2D Corners
 dx <- c(-5000, 5000, 5000, -5000)
 dy <- c(-5000, -5000, 5000, 5000)
 
-## Create 3D arrays to hold 4 corners for every (x,y) cell
 lon_corners <- array(NA, dim = c(4, length(x_vals), length(y_vals)))
 lat_corners <- array(NA, dim = c(4, length(x_vals), length(y_vals)))
 
-## This will have (4 * length(x) * length(y)) rows
 all_corners_df <- do.call(rbind, lapply(1:4, function(i) {
   expand.grid(x = x_vals + dx[i], y = y_vals + dy[i])
 }))
 
-## Transform everything in ONE single batch
-all_corners_sf <- st_as_sf(all_corners_df, coords = c("x", "y"), crs = target_crs)
+all_corners_sf    <- st_as_sf(all_corners_df, coords = c("x", "y"), crs = target_crs)
 all_corners_wgs84 <- st_transform(all_corners_sf, 4326)
-all_coords <- st_coordinates(all_corners_wgs84)
+all_coords        <- st_coordinates(all_corners_wgs84)
 
-## Map the big matrix back into the 3D arrays
-### Each slice represents one corner (1 to 4)
 n_points <- length(x_vals) * length(y_vals)
 
 for (i in 1:4) {
@@ -354,16 +345,16 @@ for (i in 1:4) {
 }
 
 # 4. Define NetCDF Dimensions and Variables
-dim_x  <- ncdim_def("x", "meters", x_vals)
-dim_y  <- ncdim_def("y", "meters", y_vals)
-dim_nv <- ncdim_def("nv", "", 1:4, create_dimvar = FALSE) # 4 corners
+dim_x  <- ncdim_def("x", "m", x_vals)
+dim_y  <- ncdim_def("y", "m", y_vals)
+dim_nv <- ncdim_def("nv", "", 1:4, create_dimvar = FALSE)
 
-## Variables
 var_lon      <- ncvar_def("lon", "degrees_east", list(dim_x, dim_y), prec="double")
 var_lat      <- ncvar_def("lat", "degrees_north", list(dim_x, dim_y), prec="double")
 var_lon_bnds <- ncvar_def("lon_bnds", "degrees_east", list(dim_nv, dim_x, dim_y), prec="double")
 var_lat_bnds <- ncvar_def("lat_bnds", "degrees_north", list(dim_nv, dim_x, dim_y), prec="double")
-var_crs      <- ncvar_def("crs", "", list(), prec="char")
+# FIX: Use prec="integer" for scalar CRS container variable
+var_crs      <- ncvar_def("crs", "", list(), prec="integer") 
 var_dummy    <- ncvar_def("dummy", "none", list(dim_x, dim_y), prec="float")
 
 # 5. Create and Write
@@ -375,16 +366,23 @@ ncvar_put(nc, var_lon_bnds, lon_corners)
 ncvar_put(nc, var_lat_bnds, lat_corners)
 ncvar_put(nc, var_dummy, matrix(0, nrow=length(x_vals), ncol=length(y_vals)))
 
-# 6. CRITICAL Metadata for Conservative Remapping
-## This is the "Magic Fix" that tells CDO where the corners are
+# 6. CRITICAL Metadata Attributes for CDO Grid Recognition
+# FIX: Attach mandatory CF attributes to coordinate variables
+ncatt_put(nc, "lon", "standard_name", "longitude")
+ncatt_put(nc, "lon", "units", "degrees_east")
+ncatt_put(nc, "lon", "axis", "X")
 ncatt_put(nc, "lon", "bounds", "lon_bnds")
+
+ncatt_put(nc, "lat", "standard_name", "latitude")
+ncatt_put(nc, "lat", "units", "degrees_north")
+ncatt_put(nc, "lat", "axis", "Y")
 ncatt_put(nc, "lat", "bounds", "lat_bnds")
 
-## Re-link dummy to coordinates
+## Link dummy variable to 2D coordinates
 ncatt_put(nc, "dummy", "coordinates", "lon lat")
 ncatt_put(nc, "dummy", "grid_mapping", "crs")
 
-## Albers Projection Details (for GIS/Compatibility)
+## Projection Attributes
 ncatt_put(nc, "crs", "grid_mapping_name", "albers_conical_equal_area")
 ncatt_put(nc, "crs", "standard_parallel", c(30, 50))
 ncatt_put(nc, "crs", "longitude_of_central_meridian", -124.5)
@@ -394,10 +392,12 @@ ncatt_put(nc, "crs", "false_northing", 0.0)
 ncatt_put(nc, "crs", "crs_wkt", wkt_string)
 ncatt_put(nc, "crs", "proj4text", proj_string)
 
-## X and Y Axis Attributes (CRITICAL for CDO)
+## X and Y Axis Attributes
 ncatt_put(nc, "x", "standard_name", "projection_x_coordinate")
+ncatt_put(nc, "x", "long_name", "Albers Equal Area Projected X coordinate")
 ncatt_put(nc, "x", "axis", "X")
 ncatt_put(nc, "y", "standard_name", "projection_y_coordinate")
+ncatt_put(nc, "y", "long_name", "Albers Equal Area Projected Y coordinate")
 ncatt_put(nc, "y", "axis", "Y")
 
 ## Global Attributes
@@ -406,8 +406,14 @@ ncatt_put(nc, 0, "Conventions", "CF-1.6")
 
 nc_close(nc)
 
-## Create the text grid description CDO uses for the actual math
-system(paste("cdo griddes", target_grid_nc, "> target_10km_grid.txt"))
+# 7. Generate CDO Grid Description
+# Adjust command string if calling from Windows R via WSL:
+cdo_cmd <- sprintf("cdo griddes %s > %s", target_grid_nc, target_grid_txt)
+if (.Platform$OS.type == "windows") {
+  cdo_cmd <- paste("wsl", cdo_cmd)
+}
+
+system(cdo_cmd)
 # --- End grid creation ---
 
 # --- Regrid data ---

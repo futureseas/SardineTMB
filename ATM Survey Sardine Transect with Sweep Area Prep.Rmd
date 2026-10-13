@@ -159,7 +159,7 @@ len200plus <- len.bins |>
 # Join data sets 
 #------------------------------------------------------------------
 
-len.bins2 <- rbind(len_less150, len_150to200, len200plus)
+len.bins2 <- bind_rows(len_less150, len_150to200, len200plus)
 
 ```
 
@@ -604,7 +604,7 @@ From the structure it is necessary to change the len.bin3 equilibrium_time.pacif
 ```{r, join.tables}
 
 # Formats match, join the two data frames.
-PreAbs <- rbind(Sardine.present, Absent) |>
+PreAbs <- bind_rows(Sardine.present, Absent) |>
   # Create a data object
   mutate(date = as.Date(equilibrium_time.pacific))
 # View(PreAbs)
@@ -733,7 +733,7 @@ area.transects.n <- area.transects |>
 
 # Join spatial objects and convert DateTime values to character 
 # string (ESIRI does not work with DateTime)
-area.transects.final <- rbind(area.transects.d, 
+area.transects.final <- bind_rows(area.transects.d, 
                               area.transects.n) |>
   mutate(haulback_time.pacific =
            as.character(haulback_time.pacific),
@@ -811,7 +811,7 @@ area.transects.n <- area.transects |>
   
 # Join spatial objects and convert DateTime values to character 
 # string (ESIRI does not work with DateTime)
-area.transects.final <- rbind(area.transects.d, 
+area.transects.final <- bind_rows(area.transects.d, 
                               area.transects.n) |>
   mutate(haulback_time.pacific =
            as.character(haulback_time.pacific),

@@ -174,7 +174,7 @@ Haul.weights.sar.no.length <- Haul.weights.sar.no.length |>
          )
 
 # Join tables
-Hauls2Fill <- rbind(no.specimen.dat,
+Hauls2Fill <- bind_rows(no.specimen.dat,
                     Haul.weights.sar.no.length)
 
 # View(Hauls2Fill)
@@ -501,7 +501,7 @@ US.specimen.dat.clean <- US.specimen.dat.clean |>
 # [23] FALSE FALSE FALSE FALSE
 
 # Join back to clean data
-allDat <- rbind(final_expanded_specimens.clean, 
+allDat <- bind_rows(final_expanded_specimens.clean, 
                 US.specimen.dat.clean)
 
 # Verify that these entries correspond to other species
