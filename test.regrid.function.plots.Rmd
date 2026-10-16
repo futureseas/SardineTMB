@@ -1,5 +1,5 @@
 ---
-title: "ROMS Test MLD Method"
+title: "ROMS MLD Cell Value Assignment"
 author: "Stephanie Hopkins"
 date: "`r Sys.Date()`"
 output: 
@@ -32,16 +32,13 @@ source(paste0(dir,"/functions.R"))
 
 ```
 
-# Load coastal shapefile and define projection
+# Define projection
 
 ```{r, ROMS.test}
 
 # Since the data falls within two UTM zones and there is not an ideal projection to use, apply a custom equal area Albers projection
 aea_custom <- "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs"
 
-# High res coastal boundary from NOAA
-land.barrier <- read_sf(here(dir, "Data", "Shapefiles",
-                             "land.barrier.shp"))
 
 ```
 
@@ -116,7 +113,7 @@ xmax
 # Crop land mass
 #----------------------------------------------------------------------------
 
-PacificCoast.wgs84 <- PacificCoast3.wgs84 %>% 
+PacificCoast.wgs84 <- PacificCoast3.wgs84 |> 
   # Clip the shapefile to match the latitude range
   st_crop(PacificCoast3.wgs84, 
           xmin = -133, 
@@ -147,108 +144,8 @@ st_bbox(PacificCoast.wgs84)
 #     xmin ymin xmax ymax
 # [1] -133   27 -111   55
 
-```
-
-# Creat hline boundaries
-
-Because the current model looks at only the Northern sub population in US waters, one of the boundary extents should include the national boarders. The second should look at the coast of California where the most mixing is thought to occur for Pacific Sardine sub populations (under the current survey hypothesis). From the data we are looking at data from UTM zone 10 and UTM zone 11 use the USA Contiguous Albers Equal Area Conic project (ESRI:102003). The corresponding ESPG code for ESRI:102003 is aea_custom.
-
-```{r, find.original.model.break.dimensions}
-
-# 1. Turn off s2 processing for map graphic only
-sf_use_s2(FALSE)
-
-# First transform the data to be able to do intersection analysis
+# For plot intersection work, transform to Albers equal area
 PacificCoast.aea_custom <- st_transform(PacificCoast.wgs84, crs = aea_custom)
-
-#----------------------------------------------------------------------------
-# In order to find the state boundary extents, use ne_states function in 
-# rnaturalearth
-#----------------------------------------------------------------------------
-
-# Find state boundaries
-PCoastStates.wgs84 <- ne_states(returnclass = "sf")
-
-PCoastStates.aea_custom <-
-  # transform to NAD83 / Conus Albers
-  st_transform(PCoastStates.wgs84, crs = aea_custom) 
-
-PCoastStates <- st_intersection(PCoastStates.aea_custom, PacificCoast.aea_custom) %>%
-  st_transform(., crs = 4326)
-
-#----------------------------------------------------------------------------
-# For EEZ definitions 
-#----------------------------------------------------------------------------
-
-# https://nauticalcharts.noaa.gov/data/us-maritime-limits-and-boundaries.html
-
-eez.dir <- here(dir, "Data", "Shapefiles", "EEZ.Boundaries")
-eez <- read_sf(paste(eez.dir, "/USMaritimeLimitsNBoundaries.shp", sep = ""))
-
-#----------------------------------------------------------------------------
-# Putting it all together
-#----------------------------------------------------------------------------
-
-hlines <- eez %>%
-  filter(REGION == "Pacific Coast") %>%
-  mutate(
-    # Create southern US EEZ boundary
-    ymin = st_bbox(.)["ymin"],
-    # Create northern US EEZ boundary
-    ymax = st_bbox(.)["ymax"],
-    # Create northern stock boundary (Westernmost Point, CA)
-    nstock = 40.4385,
-    # Create southern stock boundary (Point Conception, CA)
-    point.concept = 34.4486)
-
-#----------------------------------------------------------------------------
-# Create a transformed line for residual plots
-#----------------------------------------------------------------------------
-
-# Create northern stock boundary (Westernmost Point, CA)
-nstock <- st_sf(
-  geometry = 
-    st_sfc(
-      st_linestring(matrix(c(-133, 40.4385, -111, 40.4385), 
-                           ncol = 2, byrow = TRUE))),
-  crs = 4326
-  ) %>%
-  st_transform(., crs = aea_custom)
-
-# Create southern stock boundary (Point Conception, CA)
-point.concept <- st_sf(
-  geometry = 
-    st_sfc(
-      st_linestring(matrix(c(-133, 34.4486, -111, 34.4486), 
-                           ncol = 2, byrow = TRUE))),
-  crs = 4326
-  ) %>%
-  st_transform(., crs = aea_custom)
-  
-# Isolate extent of EEZ for USA  
-hlines_aea.custom <- eez %>%
-  filter(REGION == "Pacific Coast") %>%
-  # Transform to aea
-  st_transform(., crs = aea_custom) %>%
-  mutate(
-    # Create southern US EEZ boundary
-    ymin = st_bbox(.)["ymin"],
-    # Create northern US EEZ boundary
-    ymax = st_bbox(.)["ymax"]
-    )
-
-ggplot() +
-  geom_sf(data = nstock, col = "blue", 
-             linewidth = 0.7, linetype = "dashed") +
-  geom_sf(data = point.concept, col = "red", 
-             linewidth = 0.7, linetype = "longdash") +
-  geom_hline(data = hlines_aea.custom, aes(yintercept = ymin), col = "black", 
-             linewidth = 0.7) +
-  geom_hline(data = hlines_aea.custom, aes(yintercept = ymax), col = "black", 
-             linewidth = 0.7) +
-  geom_sf(data = PacificCoast.aea_custom) +
-  # Remove added space on x-axis
-  scale_x_continuous(expand = c(0, 0))
 
 ```
 
@@ -269,160 +166,11 @@ Populated10.wgs84 <- ne_download(scale = 110, type = "populated_places_simple",
                            category = "cultural", 
                            returnclass = "sf") 
 
-Populated10.aea_custom <- Populated10.wgs84 %>%
-  st_transform(., crs = aea_custom)
+# For plot intersection work, transform to Albers equal area
+Populated10.aea_custom <- Populated10.wgs84 |>
+  st_transform(crs = aea_custom)
 
-Populated10 <- st_intersection(Populated10.aea_custom, PacificCoast.aea_custom) %>%
-  st_transform(., crs = 4326)
-
-```
-
-# Create area definitions
-
-Note that the min and max of the plot should have great spatial bound across all data sets and that this will likely change in the next iteration.
-
-```{r, define.OM.box.extents}
-
-# 1. Turn on s2 processing for map graphic only
-sf_use_s2(TRUE)
-
-#----------------------------------------------------------------------------
-# Define data boundaries
-#----------------------------------------------------------------------------
-
-xmin = -134.11630 # CUFES boundary
-ymin =  28.5      # Artificial boundary
-xmax = -114.0     # Artificial boundary
-ymax = 54.74310   # CUFES boundary
-
-#----------------------------------------------------------------------------
-# For Northern US EEZ to Inf
-#----------------------------------------------------------------------------
-
-z1.bbox_coords <- c(xmin, unique(hlines$ymax), xmax, ymax)
-names(z1.bbox_coords) = c("xmin","ymin","xmax","ymax")
-
-z1bbp.wgs84 <- st_as_sfc(st_bbox(z1.bbox_coords)) 
-st_crs(z1bbp.wgs84) = 4326
-
-st_bbox(z1bbp.wgs84)
-
-# Convert to m for intersection
-z1bbp <- st_sf(Area_id = 1,
-               geometry = z1bbp.wgs84) %>%
-  st_transform(.,crs = aea_custom)
-
-#----------------------------------------------------------------------------
-# For Northern stock to Northern US EEZ
-#----------------------------------------------------------------------------
-
-z2.bbox_coords <- c(xmin, unique(hlines$nstock), xmax, unique(hlines$ymax))
-names(z2.bbox_coords) = c("xmin","ymin","xmax","ymax")
-
-z2bbp.wgs84 <- st_as_sfc(st_bbox(z2.bbox_coords)) 
-st_crs(z2bbp.wgs84) = 4326
-
-st_bbox(z2bbp.wgs84)
-
-# Convert to m for intersection
-z2bbp <- st_sf(Area_id = 2,
-               geometry = z2bbp.wgs84) %>%
-  st_transform(.,crs = aea_custom)
-
-#----------------------------------------------------------------------------
-# For Southern stock to Northern stock
-#----------------------------------------------------------------------------
-
-z3.bbox_coords <- c(xmin, unique(hlines$point.concept), xmax,
-                    unique(hlines$nstock))
-names(z3.bbox_coords) = c("xmin","ymin","xmax","ymax")
-
-z3bbp.wgs84 <- st_as_sfc(st_bbox(z3.bbox_coords))
-st_crs(z3bbp.wgs84) = 4326
-
-st_bbox(z3bbp.wgs84)
-
-# Convert to m for intersection
-z3bbp <- st_sf(Area_id = 3,
-               geometry = z3bbp.wgs84) %>%
-  st_transform(.,crs = aea_custom)
-
-#----------------------------------------------------------------------------
-# For Southern US EEZ to Southern stock
-#----------------------------------------------------------------------------
-
-z4.bbox_coords <- c(xmin, unique(hlines$ymin), xmax,
-                    unique(hlines$point.concept))
-names(z4.bbox_coords) = c("xmin","ymin","xmax","ymax")
-
-z4bbp.wgs84 <- st_as_sfc(st_bbox(z4.bbox_coords))
-st_crs(z4bbp.wgs84) = 4326
-
-st_bbox(z4bbp.wgs84)
-
-# Convert to m for intersection
-z4bbp <- st_sf(Area_id = 4,
-               geometry = z4bbp.wgs84) %>%
-  st_transform(.,crs = aea_custom)
-
-#----------------------------------------------------------------------------
-# For Inf to Southern US EEZ
-#----------------------------------------------------------------------------
-
-z5.bbox_coords <- c(xmin, ymin, xmax, unique(hlines$ymin))
-names(z5.bbox_coords) = c("xmin","ymin","xmax","ymax")
-
-z5bbp.wgs84 <- st_as_sfc(st_bbox(z5.bbox_coords))
-st_crs(z5bbp.wgs84) = 4326
-
-st_bbox(z5bbp.wgs84)
-
-# Convert to m for intersection
-z5bbp <- st_sf(Area_id = 5,
-               geometry = z5bbp.wgs84) %>%
-  st_transform(.,crs = aea_custom)
-
-```
-
-## Check OM spatial layout
-
-This will give us an idea if the previous definitions are appropriate.
-
-```{r, plot.OM.box.extents}
-
-area.diams <-
-  ggplot() +
-  geom_sf(data = z1bbp.wgs84, fill = "lightgrey", col = "black", 
-          alpha = 0.5) +
-  geom_sf(data = z2bbp.wgs84, fill = "blue", col = "black", 
-          alpha = 0.5) +
-  geom_sf(data = z3bbp.wgs84, fill = "lightgreen", col = "black",
-          alpha = 0.5) +
-  geom_sf(data = z4bbp.wgs84, fill = "green", col = "black", 
-          alpha = 0.5) +
-  geom_sf(data = z5bbp.wgs84, fill = "steelblue", col = "black", 
-          alpha = 0.5) +
-  geom_sf(data = PacificCoast.wgs84,
-          color = "#ae8f60", 
-          size = 0.7, 
-          fill = "#E1C699") +
-  geom_sf(data = PCoastStates,
-          color = "#ae8f60", 
-          size = 0.7, 
-          fill = "#E1C699") +
-  geom_sf(data = Populated10, col = "black") +
-  geom_text(data = Populated10,
-            aes(x = longitude, y = latitude, label = name),
-            col = "black", 
-            position = position_dodge(width = 1),
-            vjust = 1) +
-  scale_y_continuous(limits = c(27,55), 
-                     breaks = lat_breaks, 
-                     labels = lat_labels, 
-                     expand = c(0.05, 0.05)) +
-  labs(y = "Latitude")
-
-area.diams
+Populated10 <- st_intersection(Populated10.aea_custom, PacificCoast.aea_custom)
 
 ```
 
@@ -439,43 +187,39 @@ TwoSeas.dat2 <- fread(
 
 # Check how many keys are present in 
 # the ROMS hindcast
-test.keys <- TwoSeas.dat2 %>% 
+test.keys <- TwoSeas.dat2 |> 
   filter(Year < 2021) 
 length(unique(test.keys$keys))
 # [1] 3249
 
 # Create transect data
 ## Rename columns to match function 
-survey.transects.sf <- TwoSeas.dat2 %>%
-  group_by(keys) %>% 
+survey.transects.sf <- TwoSeas.dat2 |>
+  group_by(keys) |> 
   # remove potentially conflicting column names
-  select(-c(X,Y)) %>%
-  mutate(FID = keys) %>%
-  make_transect_sf(., crs = 4326) %>%
-  ungroup() %>%
+  select(-c(X,Y)) |>
+  mutate(FID = keys) |>
+  make_transect_sf(crs = 4326) |>
+  ungroup() |>
   # Project the data to Albers Conical Equal Area
-  st_transform(., crs = aea_custom) %>%
-  group_by(Year, Season, latBin, keys, YearSeas.nm) %>%
+  st_transform(crs = aea_custom) |>
+  group_by(Year, Season, latBin, keys, YearSeas.nm) |>
   mutate(Haul.kg = round(sum(Scaled_Biomass_Contribution), 7),
             Haul.check = first(Species_weight),
-            Fin_sweep.m3 = first(Fin_sweep.m3)) %>%
-  ungroup() %>%
-  group_by(Year, Season, latBin, keys, YearSeas.nm, len.bin) %>%
-  mutate(Haul_Bin.kg = round(sum(Scaled_Biomass_Contribution), 7)) %>%
-  ungroup() %>%
-  mutate(Month = month(date)) %>%
-  mutate(survey_date = as.Date(paste0(Year, "-", Month, "-01"))) %>%
+            Fin_sweep.m3 = first(Fin_sweep.m3)) |>
+  ungroup() |>
+  group_by(Year, Season, latBin, keys, YearSeas.nm, len.bin) |>
+  mutate(Haul_Bin.kg = round(sum(Scaled_Biomass_Contribution), 7)) |>
+  ungroup() |>
+  mutate(Month = month(date)) |>
+  mutate(survey_date = as.Date(paste0(Year, "-", Month, "-01"))) |>
   ungroup()
 
-z1bbp.aea.tr <- z1bbp.wgs84 %>% st_transform(., crs = aea_custom)
-z2bbp.aea.tr <- z2bbp.wgs84 %>% st_transform(., crs = aea_custom)
-z3bbp.aea.tr <- z3bbp.wgs84 %>% st_transform(., crs = aea_custom)
-z4bbp.aea.tr <- z4bbp.wgs84 %>% st_transform(., crs = aea_custom)
-z5bbp.aea.tr <- z5bbp.wgs84 %>% st_transform(., crs = aea_custom)
-
 ```
 
-# CDO regridding of MLD test (2-step)
+# CDO regridding of MLD
+
+To see how the regridding of the ROMS data works, run the following:
 
 ```{r, test.mld.def}
 
@@ -483,214 +227,8 @@ z5bbp.aea.tr <- z5bbp.wgs84 %>% st_transform(., crs = aea_custom)
 sf_use_s2(TRUE)
 
 # File path
-nc_file.mld <- here(dir, "Data", "ROMS2", "Regridded", "WGS-84",
-                    "allvars_mld_hindcast_2020_mld_masked_regrid.nc")
-
-# Input ROMS files
-fls <- list.files(here(dir, "Data", "ROMS2", "Regridded", "WGS-84"), 
-                  pattern = "^allvars_mld_hindcast_.*\\.nc$", 
-                  full.names = TRUE)
-
-# Open the NetCDF file
-nc.mld <- nc_open(nc_file.mld)
-
-# Get all variable names
-var_names <- names(nc.mld$var)
-var_names
-# [1] "mld"
-
-st.mld <- read_stars(nc_file.mld)
-
-# 2. Force the CRS assignment (this populates the NULL CRS)
-st.mld <- st_set_crs(st.mld, 4326)
-
-# Check if meta data is conserved
-attributes(st.mld)$units
-
-# Often meta data will not be conserved and you will need to manually assign it
-attr(st.mld[[1]], "units") <- nc.mld$var$mld$units
-
-# Check that it is saved
-attr(st.mld[[1]], "units")
-
-# Assuming dims: var_data[time, lat, lon], get first time slice
-slice.mld <- st.mld[,,,1]
-
-# Close nc
-nc_close(nc.mld)
-
-# Convert slice to Albers Equal Area projection
-slice.mld.aea.tr <-  slice.mld %>% 
-  st_transform(., crs = aea_custom)
-
-# Create a polygon layer to test intersections
-slice.mld.aea.tr.poly <-  slice.mld.aea.tr %>% 
-  st_as_sf() %>%
-  st_union()
-
-# Find intersections (which transects are inside slice.aea.tr)
-overlap.mld <- st_intersects(survey.transects.sf, slice.mld.aea.tr.poly, 
-                             sparse = FALSE)
-
-# Get the indices of transects that intersect
-overlapping.mld_transects <- survey.transects.sf[apply(overlap.mld, 
-                                                       1, any), ]
-
-# Get the indices of transects that do not intersect
-non_overlapping.mld_transects <- survey.transects.sf[!apply(overlap.mld, 
-                                                            1, any), ]
-
-# Create file name from device memory
-png("mld.regridded_plot_2-step.png", width = 1200, height = 1000, res = 150)
-
-# Check and plot
-plot(slice.mld.aea.tr, col = viridis(100), # Number of colour levels
-     main = 
-       "Mixing Layer Depth (method: CDO Bilinear (2-step trans.)) - Jan.2020",
-     axes = TRUE)
-
-# Add zone def polygons with semi-transparent fills and black borders
-plot(z1bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z2bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z3bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z4bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z5bbp.aea.tr, col = NA, border = "black", add = TRUE)
-
-# Add Pacific coast and state boundaries
-plot(st_geometry(PacificCoast.wgs84 %>% 
-                   st_transform(.,crs = st_crs(slice.mld.aea.tr))),  
-     col = "#E1C699", border = "#ae8f60", lwd = 0.7, add = TRUE)
-plot(st_geometry(PCoastStates %>% 
-                   st_transform(.,crs = st_crs(slice.mld.aea.tr))),
-     col = "#E1C699", border = "#ae8f60", lwd = 0.7, add = TRUE)
-
-# Add city names
-coords <- sf::st_coordinates(Populated10)
-text(coords[,1], coords[,2], labels = Populated10$name,
-     col = "black", pos = 3, cex = 0.8)
-
-# Plot populated places as transects
-plot(Populated10, col = "black", pch = 20, cex = 1, add = TRUE)
-
-# Add overlapping and non-overlapping transects
-plot(overlapping.mld_transects, pch = 19, col = "black", cex = 0.5, 
-     add = TRUE)
-plot(non_overlapping.mld_transects, pch = 19, col = "red", cex = 0.5, 
-     add = TRUE)
-
-dev.off()
-
-```
-
-## CDO regridding of bathymetry test (2-step)
-
-```{r, test.h.def}
-
-# 1. Turn on s2 processing for map graphic only
-sf_use_s2(TRUE)
-
-# File path
-nc_file.h <- here(dir, "Data", "ROMS2", "Regridded", "WGS-84",
-                  "bathy_nep_h_masked_regrid.nc")
-
-# Open the NetCDF file
-nc.h <- nc_open(nc_file.h)
-
-# Get all variable names
-var_names <- names(nc.h$var)
-var_names
-# [1] "h"
-
-st.h <- read_stars(nc_file.h)
-
-# 2. Force the CRS assignment (this populates the NULL CRS)
-st.h <- st_set_crs(st.h, 4326)
-
-# Check if meta data is conserved
-attributes(st.h)$units
-
-# Often meta data will not be conserved and you will need to manually assign it
-attr(st.h[[1]], "units") <- nc.h$var$h$units
-
-# Check that it is saved
-attr(st.h[[1]], "units")
-
-# Assuming dims: var_data[time, lat, lon], get first time slice
-#slice.h <- st.h[,,,1]
-
-# Close nc
-nc_close(nc.h)
-
-# Convert slice to Albers Equal Area projection
-st.h.aea.tr <-  st.h %>% 
-  st_transform(., crs = aea_custom)
-
-# Create a polygon layer to test intersections
-st.h.aea.tr.poly <-  st.h.aea.tr %>% 
-  st_as_sf() %>%
-  st_union()
-
-# Find intersections (which transects are inside slice.aea.tr)
-overlap.h <- st_intersects(survey.transects.sf, st.h.aea.tr.poly, 
-                           sparse = FALSE)
-
-# Get the indices of transects that intersect
-overlapping.h_transects <- survey.transects.sf[apply(overlap.h, 
-                                                     1, any), ]
-
-# Get the indices of transects that do not intersect
-non_overlapping.h_transects <- survey.transects.sf[!apply(overlap.h,
-                                                          1, any), ]
-
-# Create file name from device memory
-png("h.regridded_plot_2-step.png", width = 1200, height = 1000, res = 150)
-
-# Check and plot
-plot(st.h.aea.tr, col = viridis(100), # Number of colour levels
-     main = "Bathymetry Depth (method: CDO Bilinear (2-step trans.))",
-     axes = TRUE)
-
-# Add zone def polygons with semi-transparent fills and black borders
-plot(z1bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z2bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z3bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z4bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z5bbp.aea.tr, col = NA, border = "black", add = TRUE)
-
-# Add Pacific coast and state boundaries
-plot(st_geometry(PacificCoast.wgs84 %>% st_transform(.,crs =
-                                                       st_crs(st.h.aea.tr))),
-     col = "#E1C699", border = "#ae8f60", lwd = 0.7, add = TRUE)
-plot(st_geometry(PCoastStates %>% st_transform(.,crs = st_crs(st.h.aea.tr))),
-     col = "#E1C699", border = "#ae8f60", lwd = 0.7, add = TRUE)
-
-# Add city names
-coords <- sf::st_coordinates(Populated10)
-text(coords[,1], coords[,2], labels = Populated10$name,
-     col = "black", pos = 3, cex = 0.8)
-
-# Plot populated places as transects
-plot(Populated10, col = "black", pch = 20, cex = 1, add = TRUE)
-
-# Add overlapping and non-overlapping transects
-plot(overlapping.h_transects, pch = 19, col = "black", cex = 0.5, add = TRUE)
-plot(non_overlapping.h_transects, pch = 19, col = "red", cex = 0.5, 
-     add = TRUE)
-
-dev.off()
-
-```
-
-# CDO regridding of MLD test (1-step)
-
-```{r, test.mld.def}
-
-# 1. Turn on s2 processing for map graphic only
-sf_use_s2(TRUE)
-
-# File path
-nc_file.mld2 <- here(dir, "Data", "ROMS2", "Regridded", "10x10km",
-                     "allvars_mld_hindcast_2020_mld_masked_regrid.nc")
+nc_file.mld2 <- here(dir, "Data", "ROMS2", "Regridded",
+                     "mld_hindcast_2019_masked_regrid.nc")
 
 # Open the NetCDF file
 nc.mld2 <- nc_open(nc_file.mld2)
@@ -724,8 +262,8 @@ slice.mld2 <- st.mld2[,,,1]
 nc_close(nc.mld2)
 
 # Create a polygon layer to test intersections
-slice.mld.aea.poly2 <-  slice.mld2 %>% 
-  st_as_sf() %>%
+slice.mld.aea.poly2 <-  slice.mld2 |> 
+  st_as_sf() |>
   st_union()
 
 # Find intersections (which transects are inside slice.aea.tr)
@@ -748,19 +286,12 @@ plot(slice.mld2, col = viridis(100), # Number of colour levels
      main = "Mixing Layer Depth (method: CDO Bilinear (1-step trans.)) - Jan.2020",
      axes = TRUE, reset = FALSE)
 
-# Add zone def polygons with semi-transparent fills and black borders
-plot(z1bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z2bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z3bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z4bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z5bbp.aea.tr, col = NA, border = "black", add = TRUE)
-
 # Add Pacific coast and state boundaries
-plot(st_geometry(PacificCoast.wgs84 %>% 
-                   st_transform(.,crs = st_crs(st.mld2))),
+plot(st_geometry(PacificCoast.wgs84 |> 
+                   st_transform(crs = st_crs(st.mld2))),
      col = "#E1C699", border = "#ae8f60", lwd = 0.7, add = TRUE)
-plot(st_geometry(PCoastStates %>%  
-                   st_transform(.,crs = st_crs(st.mld2))),
+plot(st_geometry(PCoastStates |>  
+                   st_transform(crs = st_crs(st.mld2))),
      col = "#E1C699", border = "#ae8f60", lwd = 0.7, add = TRUE)
 
 # Add city names
@@ -781,98 +312,6 @@ dev.off()
 
 ```
 
-## CDO regridding of bathymetry test (2-step)
-
-```{r, test.h.def}
-
-# 1. Turn on s2 processing for map graphic only
-sf_use_s2(TRUE)
-
-# File path
-nc_file.h2 <- here(dir, "Data", "ROMS2", "Regridded", "10x10km",
-                   "bathy_nep_h_masked_regrid.nc")
-
-# Open the NetCDF file
-nc.h2 <- nc_open(nc_file.h2)
-
-# Get all variable names
-var_names2 <- names(nc.h2$var)
-var_names2
-# [1] "h"
-
-# Note that we forced the values in the workaround so it is actually not a 
-## curvilinear grid any more
-st.h2 <- read_stars(nc_file.h2, curvilinear = NULL)
-
-# Manually reset the dimensions to the meter-based values stars often 
-## struggles with curvilinear-to-rectilinear conversion on read-in
-st.h2 <- st_set_crs(st.h2, aea_custom)
-
-# Check if meta data is conserved
-attributes(st.h2)$units
-
-# Often meta data will not be conserved and you will need to manually assign it
-attr(st.h2[[1]], "units") <- nc.h2$var$h$units
-
-# Check that it is saved
-attr(st.h2[[1]], "units")
-
-# Close nc
-nc_close(nc.h2)
-
-# Create a polygon layer to test intersections
-st.h.aea.poly2 <-  st.h2 %>% 
-  st_as_sf() %>%
-  st_union()
-
-# Find intersections (which transects are inside slice.aea.tr)
-overlap.h2 <- st_intersects(survey.transects.sf, st.h.aea.poly2, sparse = FALSE)
-
-# Get the indices of transects that intersect
-overlapping.h_transects2 <- survey.transects.sf[apply(overlap.h2, 1, any), ]
-
-# Get the indices of transects that do not intersect
-non_overlapping.h_transects2 <- survey.transects.sf[!apply(overlap.h2, 1, any), ]
-
-# Create file name from device memory
-png("h.regridded_plot_1-step.png", width = 1200, height = 1000, res = 150)
-
-# Check and plot
-plot(st.h2, col = viridis(100), # Number of colour levels
-     main = "Bathymetry Depth (method: CDO Bilinear (1-step trans.))",
-     axes = TRUE, reset = FALSE)
-
-# Add zone def polygons with semi-transparent fills and black borders
-plot(z1bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z2bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z3bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z4bbp.aea.tr, col = NA, border = "black", add = TRUE)
-plot(z5bbp.aea.tr, col = NA, border = "black", add = TRUE)
-
-# Add Pacific coast and state boundaries
-plot(st_geometry(PacificCoast.wgs84 %>% st_transform(.,crs = st_crs(st.h2))),  
-     col = "#E1C699", border = "#ae8f60", lwd = 0.7, add = TRUE)
-plot(st_geometry(PCoastStates %>% st_transform(.,crs = st_crs(st.h2))),
-     col = "#E1C699", border = "#ae8f60", lwd = 0.7, add = TRUE)
-
-# Add city names
-coords <- sf::st_coordinates(Populated10)
-text(coords[,1], coords[,2], labels = Populated10$name,
-     col = "black", pos = 3, cex = 0.8)
-
-# Plot populated places as transects
-plot(Populated10, col = "black", pch = 20, cex = 1, add = TRUE)
-
-# Add overlappping and non-overlapping transects
-plot(overlapping.h_transects2, pch = 19, col = "black", cex = 0.5, 
-     add = TRUE)
-plot(non_overlapping.h_transects2, pch = 19, col = "red", cex = 0.5, 
-     add = TRUE)
-
-dev.off()
-
-```
-
 # Join data by spatial and temporal step
 
 ## Update and create directories
@@ -882,13 +321,13 @@ dev.off()
 # Input ROMS files
 
 fls <- list.files(
-  here(dir, "Data", "ROMS2", "Regridded", "10x10km"), 
+  here(dir, "Data", "ROMS2", "Regridded"), 
   pattern = "^allvars_mld_hindcast_.*\\_mld_masked_regrid.nc$",
   full.names = TRUE)
 
 
 # Subfolder for masked output
-joined_subfolder <- here(dir, "Data", "ROMS2", "Regridded", "10x10km",
+joined_subfolder <- here(dir, "Data", "ROMS2", "Regridded",
                          "st_joins")
 if (!dir.exists(joined_subfolder)) dir.create(joined_subfolder, 
                                               recursive = TRUE) 
@@ -926,26 +365,26 @@ extract_roms_by_month <- function(f, year_subset) {
   # 5. Handle the Join safely
   # Instead of row_number(), we rely on the ID column terra::extract creates
   # which corresponds to the row index of v_transects
-  year_subset_with_id <- year_subset %>%
-    st_drop_geometry() %>%
+  year_subset_with_id <- year_subset |>
+    st_drop_geometry() |>
     mutate(temp_ID = seq_len(n()))
   
   # 6. Calculate Diagnostics (Cells per Transect)
   # This counts how many ROMS cells each individual line touched
-  diag_counts <- ext_raw %>%
-    group_by(ID) %>%
+  diag_counts <- ext_raw |>
+    group_by(ID) |>
     summarise(n_cells_intersected = n(), .groups = "drop")
   
   # 7. Merge and Extract
-  final_output <- ext_raw %>%
-    left_join(year_subset_with_id, by = c("ID" = "temp_ID")) %>%
-    left_join(diag_counts, by = "ID") %>%
+  final_output <- ext_raw |>
+    left_join(year_subset_with_id, by = c("ID" = "temp_ID")) |>
+    left_join(diag_counts, by = "ID") |>
     # Filter out cases where the point fell outside the raster extent entirely
     filter(!is.na(cell))
   
   # 4. Extract specific month value using matrix indexing
   # We use the Month column from your survey data to pick the right ROMS column
-  final_output <- final_output %>%
+  final_output <- final_output |>
     mutate(
       roms_value = sapply(1:n(), function(i) {
         month_key <- as.character(Month[i])
@@ -958,13 +397,13 @@ extract_roms_by_month <- function(f, year_subset) {
     )
   
   # 5. Cleanup and Date Shielding
-  final_output <- final_output %>%
+  final_output <- final_output |>
     # Remove the 12 month columns to keep it tidy
-    select(-matches("^[0-9]+$")) %>% 
+    select(-matches("^[0-9]+$")) |> 
     mutate(
       source_file = basename(f),
       method = "Intersection"
-    ) %>%
+    ) |>
     # Apply the same date-shielding fix as before
     mutate(across(where(~inherits(.x, "POSIXct") || inherits(.x, "IDate") ||
                           inherits(.x, "Date")), as.character))
@@ -982,7 +421,7 @@ all_results <- future_lapply(fls, function(f) {
   file_year <- as.numeric(regmatches(f, regexpr("[0-9]{4}", f)))
   
   # TO DO! Upate with the survey transects you wish to use
-  year_subset <- survey.transects.sf %>% 
+  year_subset <- survey.transects.sf |> 
     filter(as.numeric(as.character(Year)) == file_year)
   
   if(nrow(year_subset) > 0) {
@@ -999,7 +438,7 @@ mld.final_table <- dplyr::bind_rows(clean_results)
 
 # Restore POSIXct Dates
 # Replace 'DateColumn' with the actual name in your data
-mld.final_table <- mld.final_table %>%
+mld.final_table <- mld.final_table |>
   mutate(across(matches("Date|Time"), ~as.POSIXct(.x, tz = "UTC")))
 
 mld.final_table
@@ -1025,13 +464,13 @@ range(mld.final_table$roms_value, na.rm = TRUE)
 
 plotNormalHistogram(mld.final_table$n_cells_intersected)
 
-mld.final_table.agg <- mld.final_table %>%
-  group_by(keys) %>%
+mld.final_table.agg <- mld.final_table |>
+  group_by(keys) |>
   # Note that this will return NAN values when all values are NA
   ## we want this behaviour because it will tell us which transects have 
   ## absolutely no intersecting values with ROMS!
   summarise(mean_depth = mean(roms_value, na.rm = TRUE), 
-            .groups = "keep") %>%
+            .groups = "keep") |>
   ungroup()
 
 # View(mld.final_table.agg)
@@ -1049,9 +488,9 @@ For these values, you will need to try bathyemtry or st_nn
 ```{r, no.intersecting.mld}
 
 # Find which transects do not have a corresponding intersection
-no.intersection <-  mld.final_table %>%
-  group_by(keys) %>%
-  filter(all(is.na(roms_value))) %>%
+no.intersection <-  mld.final_table |>
+  group_by(keys) |>
+  filter(all(is.na(roms_value))) |>
   ungroup()
 
 # Check that at least one cell intersects
@@ -1060,84 +499,13 @@ sort(unique(no.intersection$n_cells_intersected))
 
 summary(no.intersection)
 
-transects.to.run.on.bathymetry <- survey.transects.sf %>%
-  filter(keys %in% no.intersection$keys)
-
 ```
 
 ## For transects without an associated MLD
 
-### Check if bathymetry can be used
+Here we assign mld based on the nearest feature cell
 
-Here we use bathymetry instead. Since we do not have time steps in the bathymetric layer, the process is simplified.
-
-```{r, test.bathy.joins}
-
-bathy <- here(dir, "Data", "ROMS2", "Regridded", "10x10km",
-              "bathy_nep_h_masked_regrid.nc")
-
-sf_use_s2(TRUE)
-
-# load bathy raster data set
-b <- terra::rast(bathy)
- 
-b_v_transects <- terra::vect(transects.to.run.on.bathymetry)
-  
-# 1. Extract raw cell values
-# Each row represents one intersection between a transect and a cell
-bathy.ext_raw <- terra::extract(b, b_v_transects, cells = TRUE, xy = TRUE, 
-                                touches = TRUE) 
-  
-# 2. Calculate intersection count per Transect ID
-# This tells us how many cells each transect (ID) passed through
-bathy.intersection_counts <- bathy.ext_raw %>%
-  group_by(ID) %>%
-  summarise(n_cells_intersected = n(), .groups = "drop")
-
-# 3. Join metadata and counts
-bathy.survey_metadata <- transects.to.run.on.bathymetry %>%
-  st_drop_geometry() %>%
-  mutate(ID = row_number()) %>%
-  left_join(bathy.intersection_counts, by = "ID")
-  
-# 4. Combine everything
-bathy.final_output <- bathy.ext_raw %>%
-  left_join(bathy.survey_metadata, by = "ID")
-
-# View(bathy.final_output)
-
-# Save output
-fwrite(bathy.final_output, here(dir, "Data",
-                                "survey.transects.w.bathy.obs.csv"),
-       sep = ";")
-
-```
-
-#### Summarise bathyemtry intersections
-
-```{r, bathy.aggregrates}
-
-plotNormalHistogram(bathy.final_output$h)
-
-h.final_table.agg <- bathy.final_output %>%
-  group_by(ID) %>%
-  summarise(mean_depth = mean(h), .groups = "keep") %>%
-  ungroup() %>%
-  select(-ID)
-
-sort(unique(h.final_table.agg$mean_depth))
-#  [1]  10.00000  25.31009  48.88695  58.87553  59.24986  60.47698  65.17159  65.71387
-#  [9]  67.20914  67.67137  71.86756  77.08690  87.01662  87.48782  89.89851  97.75060
-# [17]  98.05597 102.54450 120.38377 126.89574 164.16098 165.94269 173.13531 179.23092
-# [25] 194.85374 214.24873 230.73732 232.36644 244.00524 255.64404 305.54581 318.27931
-# [33] 326.41162 333.28625 335.58514 336.50897 352.04315 355.39417 371.27484 396.97253
-# [41] 412.71416 421.05067 425.63965 448.06628 477.21051 495.58426 513.24042 534.29877
-# [49] 695.90387
-```
-
-### Check if nearest neighbor approach
-
-#### Set up the data structure
+### Set up the data structure
 
 ```{r, data.structure}
 
@@ -1165,21 +533,21 @@ colnames(mld.final_table)
 # [39] "source_file"                 "method"           
 
 # Save output where there is an intersecting ROMS cell
-transects.w.roms.int <- mld.final_table %>%
+transects.w.roms.int <- mld.final_table |>
   # Remove cells where there is not at least one intersection
-  filter(!keys %in% no.intersection$keys) %>%
+  filter(!keys %in% no.intersection$keys) |>
   # For each unique transect, great a group
-  group_by(keys) %>%
+  group_by(keys) |>
   # Note that this will return NAN values when all values are NA
   ## we want this behaviour because it will tell us which transects have 
   ## absolutely no intersecting values with ROMS!
-  mutate(mean_depth = mean(roms_value, na.rm = TRUE)) %>%
-  mutate(Month = as.character(Month)) %>%
-  ungroup() %>%
+  mutate(mean_depth = mean(roms_value, na.rm = TRUE)) |>
+  mutate(Month = as.character(Month)) |>
+  ungroup() |>
   # Remove individual cell and fish observations
   select(-c(x, y, ID, cell, source_file, standard_length, 
             Bio_Weight_kg, Scaled_Biomass_Contribution,
-            FID, roms_value)) %>%
+            FID, roms_value)) |>
   distinct()
 
 dim(transects.w.roms.int)
@@ -1189,8 +557,8 @@ length(unique(transects.w.roms.int$keys))
 # [1] 3131
 
 # Filter transects without an intersection
-transects.to.run.nn <- survey.transects.sf %>%
-  filter(keys %in% no.intersection$keys) %>%
+transects.to.run.nn <- survey.transects.sf |>
+  filter(keys %in% no.intersection$keys) |>
   # Create a method tag for future reference
   mutate(method = "nngeo::st_nn",
          Month = as.character(Month)
@@ -1237,10 +605,10 @@ extract_roms_by_month2 <- function(f, year_subset) {
   # This finds the closest point that HAS data for the current year
   nn_indices <- unlist(nngeo::st_nn(year_subset, r_pts_sf, k = 1, 
                                     progress = FALSE))
-  nn_values <- r_pts_sf[nn_indices, ] %>% st_drop_geometry()
+  nn_values <- r_pts_sf[nn_indices, ] |> st_drop_geometry()
 
   # 5. Extraction & Date Protection
-  result <- year_subset %>%
+  result <- year_subset |>
     mutate(
       roms_value = sapply(1:n(), function(i) {
         month_key <- as.character(Month[i])
@@ -1252,7 +620,7 @@ extract_roms_by_month2 <- function(f, year_subset) {
         }
       }),
       source_file = basename(f)
-    ) %>%
+    ) |>
     # SHIELD DATES: Convert POSIXct/IDate to Character to avoid vec_proxy errors
     mutate(across(where(~inherits(.x, "POSIXct") || inherits(.x, "IDate") || inherits(.x, "Date")), as.character))
   
@@ -1268,7 +636,7 @@ all_results2 <- future_lapply(fls, function(f) {
   # Match year from file name
   file_year <- as.numeric(regmatches(f, regexpr("[0-9]{4}", f)))
   
-  year_subset <- transects.to.run.nn %>% 
+  year_subset <- transects.to.run.nn |> 
     filter(as.numeric(as.character(Year)) == file_year)
   
   if(nrow(year_subset) > 0) {
@@ -1284,13 +652,13 @@ mld.final_table2 <- dplyr::bind_rows(clean_results)
 
 # Restore POSIXct Dates
 # Replace 'DateColumn' with the actual name in your data
-mld.final_table_w.nn <- mld.final_table2 %>%
+mld.final_table_w.nn <- mld.final_table2 |>
   mutate(across(matches("Date|Time"), ~as.POSIXct(.x, tz = "UTC")))
 
-mld.final_table_w.nn <- mld.final_table_w.nn %>%
+mld.final_table_w.nn <- mld.final_table_w.nn |>
   # Remove individual fish observations
   select(-c(source_file, standard_length, Bio_Weight_kg, 
-            Scaled_Biomass_Contribution, FID)) %>%
+            Scaled_Biomass_Contribution, FID)) |>
   distinct()
 
 ```
@@ -1319,12 +687,12 @@ names(transects.w.roms.int)[c(29,31)]
 names(mld.final_table_w.nn)[c(24,31)]
 # [1] "geometry"   "roms_value"
 
-mld.final_table_w.nn_clean <- mld.final_table_w.nn %>%
+mld.final_table_w.nn_clean <- mld.final_table_w.nn |>
   # Rename columns to match intersection data set
   mutate(n_cells_intersected = NA,
-         mean_depth = roms_value) %>%
+         mean_depth = roms_value) |>
   # Remove geometry
-  st_drop_geometry() %>%
+  st_drop_geometry() |>
   # Drop redundant column
   select(-c(roms_value))
 

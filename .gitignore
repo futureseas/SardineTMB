@@ -18,6 +18,7 @@ AcousticIndex.vs.sdmTMBIndex.Rmd
 #--------------------------------------
 Data/ATM CPS Survey
 FileComparisons.R
+LandBarrier/
 
 #--------------------------------------
 # ROMS hindcast data sets (100MiB limit exceeded)
@@ -31,6 +32,8 @@ CDO-Ubuntu20.04/target_10km_grid.txt
 # Code outputs
 #--------------------------------------
 Final.Figures/
+Data/ExampleRun/
+Final.Results/
 *.jpg
 *.rds
 *.png

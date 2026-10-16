@@ -898,8 +898,8 @@ ggplot() +
 # -----------------------------------------------------------------------------
 
 fls <- list.files(
-  here(dir, "Data", "ROMS2", "Regridded", "10x10km"), 
-  pattern = "^allvars_mld_hindcast_.*\\_mld_masked_regrid.nc$",
+  here(dir, "Data", "ROMS2", "Regridded"), 
+  pattern = "^mld_hindcast_.*\\_masked_regrid.nc$",
   full.names = TRUE
 )
 

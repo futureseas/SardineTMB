@@ -5,10 +5,10 @@ rm(list=ls())
 gc()
 
 # Define your base directory (MUST be the Linux path)
-dir <- "/mnt/c/Users/shopkin1/Documents/SardineTMB"
+dir <- "/mnt/c/Users/steph/Documents/SardineTMB"
 
 # Note the package "here" does not play well with linux
-load.lib <- c("ncdf4", "tidyverse", "data.table", "sf", "tools"#,
+load.lib <- c("ncdf4", "tidyverse", "data.table", "sf", "tools"
               )
 
 install.lib <- load.lib[!load.lib %in% installed.packages()]
@@ -32,8 +32,20 @@ proj_string <- target_crs$proj4string  # The PROJ version
 wkt_string <- target_crs$wkt                 # The WKT version (long and complex)
 # --- End create CRS object
 
+# Create directory to save downloaded ROMS dataset
+ROMSpath <- "Data/ROMS2"
+  
+  if (!dir.exists(ROMSpath)) {
+  dir.create(ROMSpath, recursive = TRUE)
+    }
+
 # Input ROMS files
-fls <- list.files(file.path(dir, "Data", "ROMS2"), pattern = "\\.nc$", full.names = TRUE)
+fls <- list.files(file.path(dir, ROMSpath), pattern = "\\.nc$", full.names = TRUE)
+
+###-----------------------------------------------------------------
+# Note mld data has been already subset with an elevation mask applied. 
+### If working with the published data, skip to line 378!
+### ----------------------------------------------------------------
 
 # --- Check structure ---
 # Open file
@@ -87,12 +99,15 @@ nc_close(res.check)
 # --- End structure check ---
 
 # --- Apply mask to each variable and time step ---
+masked.files.is.made = TRUE
+if(masked.files.is.made == FALSE) {
 # Input ROMS files
-fls <- list.files(file.path(dir, "Data", "ROMS2"), pattern = "\\.nc$", full.names = TRUE)
+fls <- list.files(file.path(dir, ROMSpath), pattern = "\\.nc$", full.names = TRUE)
 
-# Exclude bathyemetry file
-# EXPLICIT FILTER: Remove any file path that contains the word "bathy"
+# Exclude bathymetry file
 fls <- fls[!grepl("bathy", basename(fls), ignore.case = TRUE)]
+
+if (length(fls) == 0) stop("No non-bathymetry NetCDF files found in specified directory.")
 
 # Subfolder for masked output
 masked_subfolder <- file.path(dir, "Data", "ROMS2", "Masked")
@@ -167,6 +182,7 @@ for (fl in fls) {
     lat_bnds_def <- ncvar_def("lat_bnds", "degrees_north", list(dim_nbnds, dim_lon, dim_lat), prec = "double")
 
     ### Construct output filename
+    #Note the published data will have different names: e.g., mld_hindcast_2008.nc
     masked_fname <- paste0(tools::file_path_sans_ext(basename(fl)),
                            "_", var_name, "_masked.nc")
     masked_full <- file.path(masked_subfolder, masked_fname)
@@ -212,31 +228,62 @@ for (fl in fls) {
     ncvar_put(nc_out, "lon_bnds", lon_bnds)
     ncvar_put(nc_out, "lat_bnds", lat_bnds)
 
-    # 6. Linking Attributes (Enhanced for CDO/CF-Compliance)
+    # --- Variable Specific Metadata ---
+    if (var_name == "mld") {
+      ncatt_put(nc_out, "mld", "long_name", "Mixed layer depth") # Exact original string
+      ncatt_put(nc_out, "mld", "units", "m")                     # Exact original unit
+      ncatt_put(nc_out, "mld", "standard_name", "ocean_mixed_layer_thickness_defined_by_sigma_theta") # CF standard
+      
+    } else {
+      # Fallback for non-MLD variables
+      var_long <- tryCatch(nc_in$var[[var_name]]$longname, error = function(e) var_name)
+      ncatt_put(nc_out, var_name, "long_name", var_long)
+    }
+    
+    # --- Link Data Variable to Coordinates ---
+    ncatt_put(nc_out, var_name, "coordinates", "lon lat")
 
     # --- Define Coordinate Metadata ---
     # CDO needs to know these are definitely horizontal axes
     ncatt_put(nc_out, "lon", "standard_name", "longitude")
+    ncatt_put(nc_out, "lon", "long_name", "longitude of RHO points")
     ncatt_put(nc_out, "lon", "units", "degrees_east")
     ncatt_put(nc_out, "lon", "axis", "X")
     ncatt_put(nc_out, "lon", "bounds", "lon_bnds")
 
     ncatt_put(nc_out, "lat", "standard_name", "latitude")
+    ncatt_put(nc_out, "lon", "long_name", "latitude of RHO points")
     ncatt_put(nc_out, "lat", "units", "degrees_north")
     ncatt_put(nc_out, "lat", "axis", "Y")
     ncatt_put(nc_out, "lat", "bounds", "lat_bnds")
+    
+    # --- Boundary Variables Metadata ---
+    ncatt_put(nc_out, "lon_bnds", "long_name", "Longitude cell boundary corner coordinates")
+    ncatt_put(nc_out, "lat_bnds", "long_name", "Latitude cell boundary corner coordinates")
+   
+    # --- Link Data Variable to Coordinates ---
+    # Ensure the variable knows it is mapped to these 2D coordinates
+    ncatt_put(nc_out, var_name, "coordinates", "lon lat")
 
-   # --- Link Data Variable to Coordinates ---
-   # Ensure the variable knows it is mapped to these 2D coordinates
-   ncatt_put(nc_out, var_name, "coordinates", "lon lat")
+    # --- Global Attributes ---
+    # This is often the "magic" fix for 'Source grid cell corner coordinates missing'
+    # --- Global Attributes (CF-1.6 & ACDD Dataset Conventions) ---
+    ncatt_put(nc_out, 0, "Conventions", "CF-1.6, ACDD-1.3")
+    ncatt_put(nc_out, 0, "title", "Subsetted and Masked ROMS-NEP Surface Data")
+    ncatt_put(nc_out, 0, "history", paste("Created", Sys.time()))
+    
+    # Authorship & Attribution
+    ncatt_put(nc_out, 0, "author", "Stephanie Hopkins, Mer Pozo Buil,  Jerome Fiechter")
+    ncatt_put(nc_out, 0, "creator_name", "Stephanie Hopkins")
+    ncatt_put(nc_out, 0, "creator_email", "shopkin1@ucsc.edu")
+    ncatt_put(nc_out, 0, "institution", "University of California Santa Cruz / NOAA SWFSC / NOAA NWFSC")
+    
+    # Provenance & Methods
+    ncatt_put(nc_out, 0, "source", "ROMS-NEP (Northeast Pacific) regional ocean model runs provided by Mer Pozo Buil")
+    ncatt_put(nc_out, 0, "references", "Lazier et al. (2002); Drenkard et al. (2025)")
+    ncatt_put(nc_out, 0, "mld_computation", "Mixed Layer Depth computed using potential density with a fixed threshold criterion (0.03 kg/m3 difference from surface).")
 
-   # --- Global Attributes ---
-   # This is often the "magic" fix for 'Source grid cell corner coordinates missing'
-   ncatt_put(nc_out, 0, "Conventions", "CF-1.6")
-   ncatt_put(nc_out, 0, "history", paste("Created", Sys.time()))
-
-
-   nc_close(nc_out)
+    nc_close(nc_out)
 
   }
   
@@ -245,195 +292,68 @@ for (fl in fls) {
  # Final message outside the loop
  message("All files processed and masked!")
 
+ }
 }
 # --- End mask function ---
 
-# --- Structure the bathymetry file ---
-# Input ROMS files
-bathy <- file.path(dir, "Data", "ROMS2", "bathy_nep.nc")
-
-# Open bathymetry file
-bathy_in <- nc_open(bathy)
-
-# Load coordinates
-## Note that in this file xi_rho and eta_rho are named differently!!!
-lon <- ncvar_get(bathy_in, "lon_rho")      # [lon_rho x lat_rho]
-lat <- ncvar_get(bathy_in, "lat_rho")      # [lon_rho x lat_rho]
-
-# Identify variables to process (exclude coordinates, level, mask & dz layer)
-var_name <- setdiff(names(bathy_in$var), c("lon_rho", "lat_rho"))
-
-# Load variable
-## Note ncdf4 inverts the dimension order
-var_data <- ncvar_get(bathy_in, var_name)  # [lon_rho x lat_rho]
-
-# Define dimensions
-dim_lat  <- ncdim_def("lat_rho", "degrees_north", vals = seq_len(dim(lat)[2]))
-dim_lon  <- ncdim_def("lon_rho", "degrees_east", vals = seq_len(dim(lon)[1]))
-
-# Define masked variable
-var_def <- ncvar_def(
-      var_name,
-      units = bathy_in$var[[var_name]]$units,
-      dim = list(dim_lon, dim_lat), # [lon_rho x lat_rho]
-      missval = NA,
-      prec = "float"
-    )
-
-# Define curvilinear coordinates and boundaries
-## 1. Define the 'nbnds' dimension (for the 4 corners of each cell)
-dim_nbnds <- ncdim_def("nbnds", "", 1:4)
-
-## 2. Define Lon/Lat and their associated Bounds
-lon_def <- ncvar_def("lon", "degrees_east", list(dim_lon, dim_lat), prec = "float")
-lat_def <- ncvar_def("lat", "degrees_north", list(dim_lon, dim_lat), prec = "float")
-
-lon_bnds_def <- ncvar_def("lon_bnds", "degrees_east", list(dim_nbnds, dim_lon, dim_lat), prec = "double")
-lat_bnds_def <- ncvar_def("lat_bnds", "degrees_north", list(dim_nbnds, dim_lon, dim_lat), prec = "double")
-
-### Construct output filename
-bathy_fname <- paste0(tools::file_path_sans_ext(basename(bathy)), "_", var_name, "_masked.nc")
-bathy_full <- file.path(masked_subfolder, bathy_fname)
-
-## 3. Create output NetCDF
-bathy_out <- nc_create(bathy_full, list(var_def, lon_def, lat_def, lon_bnds_def, lat_bnds_def))
-
-## 4. Generate the bounds data using dynamic midpoints
-### Dimensions: [nbnds=4, xi=176, eta=536]
-lon_bnds <- array(NA, dim = c(4, dim(lon)[1], dim(lon)[2]))
-lat_bnds <- array(NA, dim = c(4, dim(lat)[1], dim(lat)[2]))
-
-### Calculate the grid spacing for each cell based on its neighbors
-#### For cells on the edge, we pad the diffs so every cell gets a width/height
-calc_delta <- function(m) {
-      d <- matrix(0, nrow=nrow(m), ncol=ncol(m))
-      # Internal differences
-      d[1:(nrow(m)-1), ] <- diff(m)
-      # Fill the last row with the same diff as the penultimate row
-      d[nrow(m), ] <- d[nrow(m)-1, ]
-      return(d * 0.5) # We want half-distance to the next center
-    }
-
-d_lon <- calc_delta(lon)
-d_lat <- calc_delta(t(lat)) # Transpose to get lat diffs along the other axis
-d_lat <- t(d_lat)
-
-### Define Corners based on local grid spacing
-#### This creates a "tiled" mesh that follows the curvilinear rotation
-##### Corner 1: Bottom Left
-lon_bnds[1,,] <- lon - d_lon; lat_bnds[1,,] <- lat - d_lat
-##### Corner 2: Bottom Right
-lon_bnds[2,,] <- lon + d_lon; lat_bnds[2,,] <- lat - d_lat
-##### Corner 3: Top Right
-lon_bnds[3,,] <- lon + d_lon; lat_bnds[3,,] <- lat + d_lat
-##### Corner 4: Top Left
-lon_bnds[4,,] <- lon - d_lon; lat_bnds[4,,] <- lat + d_lat
-
-## 5. Write data
-ncvar_put(bathy_out, var_name, var_data)
-ncvar_put(bathy_out, "lon", lon)
-ncvar_put(bathy_out, "lat", lat)
-ncvar_put(bathy_out, "lon_bnds", lon_bnds)
-ncvar_put(bathy_out, "lat_bnds", lat_bnds)
-
-## 6. Linking Attributes (Enhanced for CDO/CF-Compliance)
-
-# --- Define Coordinate Metadata ---
-# CDO needs to know these are definitely horizontal axes
-ncatt_put(bathy_out, "lon", "standard_name", "longitude")
-ncatt_put(bathy_out, "lon", "units", "degrees_east")
-ncatt_put(bathy_out, "lon", "axis", "X")
-ncatt_put(bathy_out, "lon", "bounds", "lon_bnds")
-
-ncatt_put(bathy_out, "lat", "standard_name", "latitude")
-ncatt_put(bathy_out, "lat", "units", "degrees_north")
-ncatt_put(bathy_out, "lat", "axis", "Y")
-ncatt_put(bathy_out, "lat", "bounds", "lat_bnds")
-
-# --- Link Data Variable to Coordinates ---
-# Ensure the variable knows it is mapped to these 2D coordinates
-ncatt_put(bathy_out, var_name, "coordinates", "lon lat")
-
-# --- Global Attributes ---
-# This is often the "magic" fix for 'Source grid cell corner coordinates missing'
-ncatt_put(bathy_out, 0, "Conventions", "CF-1.6")
-ncatt_put(bathy_out, 0, "history", paste("Created", Sys.time()))
-
-nc_close(bathy_out)
-
-nc_close(bathy_in)
-
- # Final message outside the loop
- message("Bathymetry processed and structured!")
-
-# --- End structure the bathymetry file ---
-
+###-----------------------------------------------------------------
+### If files are already masked and updated, pick up here!
+# Note this is where the codes begins if using the published data
+### ----------------------------------------------------------------
 # --- Create empty grid ---
-# 0. Setup Path and Projection ---
-## Define the file path FIRST so it's ready for Step 5
-target_grid_nc <- "target_10km_grid.nc"
+# 0. Setup Path and Projection
+target_grid_nc  <- file.path(dir, ROMSpath, "target_10km_grid.nc")
+target_grid_txt <- file.path(dir, ROMSpath, "target_10km_grid.txt")
 
 # 1. Define Target Grid Space (10km)
-## We use meters because the target is Albers
 x_vals <- seq(from = floor(min_x/10000)*10000, to = ceiling(max_x/10000)*10000, by = 10000)
 y_vals <- seq(from = floor(min_y/10000)*10000, to = ceiling(max_y/10000)*10000, by = 10000)
 
-# 2. Calculate 2D Lat/Lon Matrices (The CDO Workaround)
-## This translates every X/Y meter point into a geographic degree point
+# 2. Calculate 2D Lat/Lon Matrices
 grid_df     <- expand.grid(x = x_vals, y = y_vals)
 grid_sf     <- st_as_sf(grid_df, coords = c("x", "y"), crs = target_crs)
 grid_wgs84  <- st_transform(grid_sf, 4326)
 coords      <- st_coordinates(grid_wgs84)
 
-## Reshape to 2D matrices for NetCDF
 lon_2d <- matrix(coords[,1], nrow = length(x_vals), ncol = length(y_vals))
 lat_2d <- matrix(coords[,2], nrow = length(x_vals), ncol = length(y_vals))
 
-# 3. Calculate 2D Corners (For Conservative Remapping)
-## Each cell has 4 corners: [bottom-left, bottom-right, top-right, top-left]
+# 3. Calculate 2D Corners
 dx <- c(-5000, 5000, 5000, -5000)
 dy <- c(-5000, -5000, 5000, 5000)
 
-## Create 3D arrays to hold 4 corners for every (x,y) cell
 lon_corners <- array(NA, dim = c(4, length(x_vals), length(y_vals)))
 lat_corners <- array(NA, dim = c(4, length(x_vals), length(y_vals)))
 
-## This will have (4 * length(x) * length(y)) rows
 all_corners_df <- do.call(rbind, lapply(1:4, function(i) {
   expand.grid(x = x_vals + dx[i], y = y_vals + dy[i])
 }))
 
-## Transform everything in ONE single batch
-all_corners_sf <- st_as_sf(all_corners_df, coords = c("x", "y"), crs = target_crs)
+all_corners_sf    <- st_as_sf(all_corners_df, coords = c("x", "y"), crs = target_crs)
 all_corners_wgs84 <- st_transform(all_corners_sf, 4326)
-all_coords <- st_coordinates(all_corners_wgs84)
+all_coords        <- st_coordinates(all_corners_wgs84)
 
-## Map the big matrix back into the 3D arrays
-### Each slice represents one corner (1 to 4)
 n_points <- length(x_vals) * length(y_vals)
 
 for (i in 1:4) {
   start_idx <- ((i - 1) * n_points) + 1
-  end_idx   <- i * n_points
-  
-  lon_corners[i,,] <- matrix(all_coords[start_idx:end_idx, 1], 
-                             nrow = length(x_vals), ncol = length(y_vals))
-  lat_corners[i,,] <- matrix(all_coords[start_idx:end_idx, 2], 
-                             nrow = length(x_vals), ncol = length(y_vals))
+  end_idx   <- i * n_points  # FIXED: multiplied instead of subtracted
+
+  lon_corners[i,,] <- matrix(all_coords[start_idx:end_idx, 1], nrow = length(x_vals), ncol = length(y_vals))
+  lat_corners[i,,] <- matrix(all_coords[start_idx:end_idx, 2], nrow = length(x_vals), ncol = length(y_vals))
 }
 
 # 4. Define NetCDF Dimensions and Variables
-dim_x  <- ncdim_def("x", "meters", x_vals)
-dim_y  <- ncdim_def("y", "meters", y_vals)
-dim_nv <- ncdim_def("nv", "", 1:4, create_dimvar = FALSE) # 4 corners
+dim_x  <- ncdim_def("x", "m", x_vals)
+dim_y  <- ncdim_def("y", "m", y_vals)
+dim_nv <- ncdim_def("nv", "", 1:4, create_dimvar = FALSE)
 
-## Variables
 var_lon      <- ncvar_def("lon", "degrees_east", list(dim_x, dim_y), prec="double")
 var_lat      <- ncvar_def("lat", "degrees_north", list(dim_x, dim_y), prec="double")
 var_lon_bnds <- ncvar_def("lon_bnds", "degrees_east", list(dim_nv, dim_x, dim_y), prec="double")
 var_lat_bnds <- ncvar_def("lat_bnds", "degrees_north", list(dim_nv, dim_x, dim_y), prec="double")
-var_crs      <- ncvar_def("crs", "", list(), prec="char")
-var_dummy    <- ncvar_def("dummy", "none", list(dim_x, dim_y), prec="float")
+var_crs      <- ncvar_def("crs", "", list(), prec="integer")
+var_dummy    <- ncvar_def("dummy", "1", list(dim_x, dim_y), prec="double") # FIXED: Added missing variable definition
 
 # 5. Create and Write
 nc <- nc_create(target_grid_nc, list(var_lon, var_lat, var_lon_bnds, var_lat_bnds, var_crs, var_dummy))
@@ -444,18 +364,23 @@ ncvar_put(nc, var_lon_bnds, lon_corners)
 ncvar_put(nc, var_lat_bnds, lat_corners)
 ncvar_put(nc, var_dummy, matrix(0, nrow=length(x_vals), ncol=length(y_vals)))
 
-# 6. CRITICAL Metadata for Conservative Remapping
-## This is the "Magic Fix" that tells CDO where the corners are
+# 6. CRITICAL Metadata Attributes for CDO Grid Recognition
+ncatt_put(nc, "lon", "standard_name", "longitude")
+ncatt_put(nc, "lon", "units", "degrees_east")
+ncatt_put(nc, "lon", "axis", "X")
 ncatt_put(nc, "lon", "bounds", "lon_bnds")
+
+ncatt_put(nc, "lat", "standard_name", "latitude")
+ncatt_put(nc, "lat", "units", "degrees_north")
+ncatt_put(nc, "lat", "axis", "Y")
 ncatt_put(nc, "lat", "bounds", "lat_bnds")
 
-## Re-link dummy to coordinates
 ncatt_put(nc, "dummy", "coordinates", "lon lat")
 ncatt_put(nc, "dummy", "grid_mapping", "crs")
 
-## Albers Projection Details (for GIS/Compatibility)
+# Projection Attributes
 ncatt_put(nc, "crs", "grid_mapping_name", "albers_conical_equal_area")
-ncatt_put(nc, "crs", "standard_parallel", c(30, 50))
+ncatt_put(nc, "crs", "standard_parallel", c(30, 50), prec = "double") # FIXED: Explicit prec parameter
 ncatt_put(nc, "crs", "longitude_of_central_meridian", -124.5)
 ncatt_put(nc, "crs", "latitude_of_projection_origin", 40)
 ncatt_put(nc, "crs", "false_easting", 0.0)
@@ -463,102 +388,129 @@ ncatt_put(nc, "crs", "false_northing", 0.0)
 ncatt_put(nc, "crs", "crs_wkt", wkt_string)
 ncatt_put(nc, "crs", "proj4text", proj_string)
 
-## X and Y Axis Attributes (CRITICAL for CDO)
+# X and Y Axis Attributes
 ncatt_put(nc, "x", "standard_name", "projection_x_coordinate")
 ncatt_put(nc, "x", "long_name", "Albers Equal Area Projected X coordinate")
 ncatt_put(nc, "x", "axis", "X")
 ncatt_put(nc, "y", "standard_name", "projection_y_coordinate")
-ncatt_put(nc, "y", "long_name", "Albers Equal Area Projected X coordinate")
+ncatt_put(nc, "y", "long_name", "Albers Equal Area Projected Y coordinate")
 ncatt_put(nc, "y", "axis", "Y")
 
-## Global Attributes
+# Global Attributes
 ncatt_put(nc, 0, "crs_wkt", wkt_string)
 ncatt_put(nc, 0, "Conventions", "CF-1.6")
 
 nc_close(nc)
 
-## Create the text grid description CDO uses for the actual math
-system(paste("cdo griddes", target_grid_nc, "> target_10km_grid.txt"))
+# 7. Generate CDO Grid Description
+cdo_cmd <- sprintf("cdo griddes %s > %s", target_grid_nc, target_grid_txt)
+if (.Platform$OS.type == "windows") {
+  cdo_cmd <- paste("wsl", cdo_cmd)
+}
+
+system(cdo_cmd)
 # --- End grid creation ---
 
 # --- Regrid data ---
 # Output folder for re-gridded files
 ## IMPORTANT: All paths here must be valid Linux paths, which /mnt/c/... is.
-regrid_subfolder <- file.path(dir, "Data", "ROMS2", "Regridded", "10x10km")
+regrid_subfolder <- file.path(dir, ROMSpath, "Regridded")
 if (!dir.exists(regrid_subfolder)) dir.create(regrid_subfolder, recursive = TRUE)
 
 # No conversion needed: target_grid_nc is already the WSL/Linux path
 ## We rename it to be clearer:
 linux_target_grid <- target_grid_nc
 
-# Load masked file list
-fls.msk <- list.files(file.path(dir, "Data", "ROMS2", "Masked"), pattern = "\\.nc$", full.names = TRUE)
+# Load masked file list (if using published data change file path accordingly)
+fls.msk <- list.files(file.path(dir, ROMSpath, "Masked"), pattern = "\\.nc$", full.names = TRUE)
 
 # Loop over all masked files
 for (f in fls.msk){
+  
+  # 1. Extract base filename without extension
+  var_file <- tools::file_path_sans_ext(basename(f))
+  
+  # 2. Skip grid files and dz files immediately
+  if (grepl("target_grid|target_10km_grid|dz_masked|bathy", var_file, ignore.case = TRUE)) {
+    next
+  }
+  
+  # 3. Initialize variable for safety
+  internal_var <- NA_character_
+  
+  # --- IF-ELSE EXTRACTION LOGIC ---
+  
+  # Clean off leading 'allvars_' and trailing '_masked'
+  cleaned <- sub("^allvars_", "", sub("_masked$", "", var_file))
+  
+  # CASE A: Non-published raw files (e.g., "allvars_mld_hindcast_2008_mld_masked")
+  # Extract variable name based on filename structure
+  if (grepl("_\\d{4}_", cleaned)) {
+    # Variable is AFTER the year (e.g., "mld_hindcast_2008_chla_vint" -> "chla_vint")
+    internal_var <- sub(".*_\\d{4}_", "", cleaned)
 
-    # 0. Skip the target grid file if it's in the list
-    if (grepl("target_grid", f)) next
-    if (grepl("target_10km_grid", f)) next
-    
-    # 1. Get variable name (f is the full Linux path)
-    var_file <- tools::file_path_sans_ext(basename(f))
+  # CASE B: Published clean files (e.g., "mld_hindcast_2008.nc")
+  }else if (grepl("_hindcast_", cleaned)) {
+    # Variable is BEFORE '_hindcast_' (e.g., "mld_hindcast_2008" -> "mld")
+    internal_var <- sub("_hindcast_.*", "", cleaned)
+  } else {
+    # Fallback: strip everything from the first underscore onward
+    internal_var <- sub("_.*", "", cleaned)
+  }
+  
+  # --- SAFETY CHECK ---
+  # Prevents CDO from receiving an 'NA' variable name and breaking the loop
+  if (is.na(internal_var) || internal_var == "") {
+    warning(paste("Could not extract internal_var for file:", var_file, "- Skipping."))
+    next
+  }
+  
+  # 4. Define output file (already the correct Linux path)
+  linux_out_file <- file.path(regrid_subfolder, paste0(var_file, "_regrid.nc"))
+  
+  # 5. Choose interpolation method
+  method <- if (grepl("chla_vint|microzooplankton_vint|mesozooplankton_vint|Pzooplankton_vint|u_vavg|v_vavg|w_vavg",
+                      internal_var, ignore.case = TRUE)) {
+    "-remapcon"  # Conservative remapping for flux/integrated quantities
+  } else {
+    "-remapbil"  # Bilinear remapping for standard 2D state variables
+  }
+  
+  # 6. WSL path translation block for Windows
+  target_grid_txt_cmd <- target_grid_txt
+  f_cmd               <- f
+  linux_out_file_cmd  <- linux_out_file
 
-    # 2. Extract internal_var 
-    
-    ## Exclude dz file
-    if (grepl("dz_masked", var_file)) {
-     next
-    }
+  if (.Platform$OS.type == "windows") {
+    target_grid_txt_cmd <- system(sprintf("wsl wslpath -a '%s'", target_grid_txt), intern = TRUE)
+    f_cmd               <- system(sprintf("wsl wslpath -a '%s'", f), intern = TRUE)
+    linux_out_file_cmd  <- system(sprintf("wsl wslpath -a '%s'", linux_out_file), intern = TRUE)
+  }
 
-    ## Handle bathymetry file 
-    if (grepl("h_masked", var_file)) {
-     internal_var <- "h" # Manual assignment for the non-year filevar_file <- setdiff(var_file, "h_masked.nc.")
+  # 7. Build a "Clean" CDO command
+  ## Note: No commas between operators in CDO, only between operator and its parameter.
+  ## We use '-setgridtype,curvilinear' to tell CDO how to read the X/Y axes
+  ## We use '-selname' to be absolutely sure CDO targets the right variable
+  cmd <- sprintf(
+    "cdo -O %s,%s -setgridtype,curvilinear -selname,%s %s %s",
+    method,
+    target_grid_txt_cmd, # Updated variable
+    internal_var,
+    f_cmd,               # Updated variable
+    linux_out_file_cmd   # Updated variable
+  )
 
-    }else{
-        ## Extract the variable name by looking for what's between the year and "_masked"
-        ### Assumes the following structure: allvars_mld_hindcast_1995_chla_vint_masked.nc
-        internal_var <- str_extract(var_file, "(?<=\\d{4}_).*(?=_masked)")
-       }
+  if (.Platform$OS.type == "windows") {
+    cmd <- paste("wsl", cmd)
+  }
 
-    # 2. Define output file (already the correct Linux path)
-    linux_out_file <- file.path(regrid_subfolder, paste0(var_file, "_regrid.nc"))
-    
-    # 3. Choose interpolation method
-    method <- if (grepl("chla_vint|microzooplankton_vint|mesozooplankton_vint|Pzooplankton_vint|u_vavg|v_vavg|w_vavg",
-                          internal_var, ignore.case = TRUE)) {
-	## Conservative for integrated/averaged quantities (Note preferred method is remapcon, but it requires corner
-	## Use Distance-weighted for integrated quantities if corners are missing
-        "remapcon"
-        ## If "remapcon" fails, try remaplaf or reducing cell boundaries (Largest Area Fraction)
-	### "remaplaf"  # Robust conservative remapping
-    } else {
-	## Bilinear for surface/level quantities
-	"remapbil"
-    }
+  # 8. Execution call
+  message("Processing: ", var_file, " -> Variable: ", internal_var)
+  system(cmd)
 
-    # 4. Build a "Clean" CDO command
-    ## Note: No commas between operators in CDO, only between operator and its paramter.
-    ## We use '-setgridtype,curvilinear' to tell CDO how to read the X/Y axes
-    ## We use '-selname' to be absolutely sure CDO targets the right variable
-    cmd <- sprintf(
-        #### CDO is called directly
-        "cdo -O %s,target_10km_grid.txt -setgrid,target_10km_grid.txt -selname,%s %s %s",
-	method,            # replaces the first  %s
-	internal_var,      # replaces the second %s
-        ### Input file (Linux)
-        f,                 # replaces the third  %s
-        ### Output file (Linux)
-	linux_out_file     # replaces the fourth %s
-    )
-
-    # 5. Run ('system()' calls the command directly in the Bash shell)
-    message("Running: ", cmd)
-    system(cmd)
+  # Final message outside the loop
+  message("All files processed and regridded!")
 }
-
-# Final message outside the loop
-message("All files processed and regridded!")
 # ---- End Regridding
 
 # --- Create validation table ---
@@ -568,50 +520,67 @@ validation_results <- list()
 for (f in fls.msk) {
     var_name <- tools::file_path_sans_ext(basename(f))
     linux_out_file <- file.path(regrid_subfolder, paste0(var_name, "_regrid.nc"))
-    
     if (file.exists(linux_out_file)) {
-        # 1. Get field-weighted mean of original file
-        ## -s suppresses CDO output, outputf prints just the number
-        orig_mean_vec <- as.numeric(system(paste0("cdo -s outputf,%g -fldmean ", f), intern = TRUE))
-        
-        # 2. Get field-weighted mean of regridded file
-        regrid_mean_vec <- as.numeric(system(paste0("cdo -s outputf,%g -fldmean ", linux_out_file), intern = TRUE))
-        
-        # 3. Calculate the overall average mean for the table
-        orig_mean <- mean(orig_mean_vec)
-        regrid_mean <- mean(regrid_mean_vec)
-
-        # 4. Calculate metrics
-        pct_change  <- ((regrid_mean - orig_mean) / orig_mean) * 100
-        
-	## Logic: Pass if the change is within +/- 10%
-	## This accounts for geometric shifts at the coastline
-	status_check <- if (is.na(pct_change)) {
-			  status_check = "NaN_ERROR"
-			} else if (pct_change > -10 && pct_change < 10) {
-			  status_check = "PASS"
-			} else {
-			  status_check = "CHECK"
-                        }
-
-        ## Store in List
-        validation_results[[var_name]] <- data.frame(
-            Variable       = var_name,
-            Original_Mean  = round(orig_mean, 4),
-            Regridded_Mean = round(regrid_mean, 4),
-            Pct_Change     = round(pct_change, 3),
-            Status         = status_check, # Use variables above
-            stringAsFacotrs = FALSE)
-
+    
+    # Path & Command preparation (WSL handling for Windows)
+    f_cmd <- f
+    out_cmd <- linux_out_file
+    cdo_prefix <- "cdo"
+    
+    if (.Platform$OS.type == "windows") {
+      f_cmd <- system(sprintf("wsl wslpath -a '%s'", f), intern = TRUE)
+      out_cmd <- system(sprintf("wsl wslpath -a '%s'", linux_out_file), intern = TRUE)
+      cdo_prefix <- "wsl cdo"
+    }
+      
+      orig_raw <- system(paste0("cdo -s outputf,%g -fldmean ", f_cmd, " 2>/dev/null"), intern = TRUE)
+      orig_mean_vec <- suppressWarnings(as.numeric(orig_raw))
+      orig_mean_vec <- orig_mean_vec[!is.na(orig_mean_vec)]
+      
+      regrid_raw <- system(paste0("cdo -s outputf,%g -fldmean ", out_cmd, " 2>/dev/null"), intern = TRUE)
+      regrid_mean_vec <- suppressWarnings(as.numeric(regrid_raw))
+      regrid_mean_vec <- regrid_mean_vec[!is.na(regrid_mean_vec)]
+      
+      orig_mean   <- mean(orig_mean_vec, na.rm = TRUE)
+      regrid_mean <- mean(regrid_mean_vec, na.rm = TRUE)
+      
+      pct_change <- if (!is.na(orig_mean) && orig_mean != 0) {
+        ((regrid_mean - orig_mean) / orig_mean) * 100
+      } else {
+        NA_real_
+      }
+      
+      status_check <- if (is.na(pct_change) || is.nan(pct_change) || is.infinite(pct_change)) {
+        "NaN_ERROR"
+      } else if (pct_change >= -10 && pct_change <= 10) {
+        "PASS"
+      } else {
+        "CHECK"
+      }
+      
+      validation_results[[var_name]] <- data.frame(
+        Variable       = var_name,
+        Original_Mean  = round(orig_mean, 4),
+        Regridded_Mean = round(regrid_mean, 4),
+        Pct_Change     = round(pct_change, 3),
+        Status         = status_check,
+        stringsAsFactors = FALSE
+      )
+    } else {
+      warning("Regridded file missing for: ", var_name)
     }
 }
 
 # Combine into a final table
-final_table <- do.call(rbind, validation_results)
+if (length(validation_results) > 0) {
+  final_table <- do.call(rbind, validation_results)
 
-# Print the table to the console
-print(final_table)
+  # Print the table to the console
+  print(final_table)
 
-# Save to CSV for your documentation
-write.csv(final_table, file.path(regrid_subfolder, "regridding_validation_report.csv"), row.names = FALSE)
+  # Save to CSV for your documentation
+  write.csv(final_table, file.path(regrid_subfolder, "regridding_validation_report.csv"), row.names = FALSE)
+}else{
+  warning("No valid results were generated for the validation report.")
+}
 # --- End creation of validation table ---
