@@ -18,6 +18,7 @@ AcousticIndex.vs.sdmTMBIndex.Rmd
 #--------------------------------------
 Data/ATM CPS Survey
 FileComparisons.R
+
 #LandBarrier/
 
 #--------------------------------------
@@ -27,7 +28,7 @@ Data/ROMS2/
 CDO-Ubuntu20.04/my_target_grid.txt
 CDO-Ubuntu20.04/target_10km_grid.nc
 CDO-Ubuntu20.04/target_10km_grid.txt
-#CDO-Ubuntu20.04/ReadMe.txt
+CDO-Ubuntu20.04/ReadMe.txt
 
 #--------------------------------------
 # Code outputs
@@ -35,6 +36,8 @@ CDO-Ubuntu20.04/target_10km_grid.txt
 Final.Figures/
 Data/ExampleRun/
 Final.Results/
+test.R
+maskedROMSplot.R
 *.jpg
 *.rds
 *.png
