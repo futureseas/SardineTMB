@@ -52,9 +52,7 @@ sapply(load.lib,require,character=TRUE)
 
 sf_use_s2(FALSE)
 
-# To Change!
-#dir <- "C:/Users/shopkin1/Documents/Sardine_SptlOM"
-dir <- "C:/Users/steph/Documents/Sardine_SptlOM"
+dir <- here(getwd())
 
 source(here("functions.R"))
 

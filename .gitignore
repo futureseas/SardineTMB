@@ -18,7 +18,7 @@ AcousticIndex.vs.sdmTMBIndex.Rmd
 #--------------------------------------
 Data/ATM CPS Survey
 FileComparisons.R
-LandBarrier/
+#LandBarrier/
 
 #--------------------------------------
 # ROMS hindcast data sets (100MiB limit exceeded)
@@ -27,7 +27,7 @@ Data/ROMS2/
 CDO-Ubuntu20.04/my_target_grid.txt
 CDO-Ubuntu20.04/target_10km_grid.nc
 CDO-Ubuntu20.04/target_10km_grid.txt
-CDO-Ubuntu20.04/ReadMe.txt
+#CDO-Ubuntu20.04/ReadMe.txt
 
 #--------------------------------------
 # Code outputs
@@ -44,4 +44,3 @@ Final.Results/
 # Non ownership data and / or restricted 
 # --------------------------------------
 Data/IPES plus Historic Surveys Canada/
-folder_name/

@@ -26,7 +26,7 @@ install.lib <- load.lib[!load.lib %in% installed.packages()]
 for(lib in install.lib) install.packages(lib,dependencies=TRUE)
 sapply(load.lib,require,character=TRUE)
 
-dir <- "C:/Users/steph/Documents/Sardine_SptlOM"
+dir <- here(getwd())
 
 source(paste0(dir,"/functions.R"))
 
@@ -322,7 +322,7 @@ dev.off()
 
 fls <- list.files(
   here(dir, "Data", "ROMS2", "Regridded"), 
-  pattern = "^allvars_mld_hindcast_.*\\_mld_masked_regrid.nc$",
+  pattern = "*\\_mld_hindcast_.*\\_masked_regrid.nc$",
   full.names = TRUE)
 
 
