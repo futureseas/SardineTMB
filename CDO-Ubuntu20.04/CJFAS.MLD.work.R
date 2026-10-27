@@ -4,7 +4,7 @@ gc()
 
 # Define your base directory (MUST be the Linux path)
 dir <- "/mnt/c/Users/steph/Documents/SardineTMB"
-
+dir <- "C:/Users/steph/Documents/SardineTMB"
 load.lib <- c("ncdf4", "tidyverse", "data.table", "sf", "tools")
 install.lib <- load.lib[!load.lib %in% installed.packages()]
 
@@ -52,16 +52,18 @@ cat("Estimated average resolution:\n")
 cat("Longitude:", round(mean_dx, 5), "°\n")
 cat("Latitude :", round(mean_dy, 5), "°\n")
 
-lon_range <- c(min(lon.ck), max(lon.ck))
-lat_range <- c(min(lat.ck), max(lat.ck))
+roms_pts <- data.frame(
+  lon = as.vector(lon.ck),
+  lat = as.vector(lat.ck)
+) |> 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
 
-bbox_wgs84 <- st_bbox(c(xmin = lon_range[1], xmax = lon_range[2],
-                        ymin = lat_range[1], ymax = lat_range[2]), 
-                      crs = st_crs(4326))
+# Transform directly to AEA projected coordinates
+roms_pts_proj <- st_transform(roms_pts, crs = target_crs)
 
-bbox_proj <- st_as_sfc(bbox_wgs84) |>
-                st_transform(crs = aea_custom) |>
-                st_bbox()
+# Extract true projected bounding box in meters
+bbox_proj <- st_bbox(roms_pts_proj)
+#bbox.test <- st_bbox(roms_pts)
 
 min_x <- bbox_proj["xmin"]
 max_x <- bbox_proj["xmax"]

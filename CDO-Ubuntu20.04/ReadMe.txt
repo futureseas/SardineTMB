@@ -23,9 +23,20 @@ Caitlin Allen Akselrud (2026). Harnessing transboundary survey integration for
 species distribution models: technical maneuvers for small pelagic fish. 
 Canadian Journal of Fisheries and Aquatic Sciences. [In review]
 
-LICENSE:
-Creative Commons Attribution 4.0 International (CC BY 4.0)
-https://creativecommons.org/licenses/by/4.0/
+ASSOCIATED CODE AND PROJECT PIPELINE:
+Hopkins, S. C., & Tommasi, D. (2026). R Code & Simulation Pipeline corresponding 
+to "Harnessing transboundary survey integration for species distribution models: 
+technical maneuvers for small pelagic fish" (CJFAS publication). 
+GitHub Repository: https://github.com/futureseas/SardineTMB	
+
+
+LICENSING & TERMS OF USE:
+- Dataset (NetCDF files): Creative Commons Attribution 4.0 International (CC BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/
+- Code & Simulation Pipeline (GitHub): GNU General Public License v3.0 (GPL-3.0)
+  https://www.gnu.org/licenses/gpl-3.0.html
+- Manuscript & Text: Open Access subject to Canadian Journal of Fisheries and 
+  Aquatic Sciences (CJFAS) publisher terms and copyright.
 
 CITING THIS DATASET:
 If you use these data, please cite both the dataset DOI and the associated 
@@ -37,6 +48,10 @@ manuscript:
   - Related Paper: Hopkins et al. (2026). Harnessing transboundary survey 
     integration for species distribution models: technical maneuvers for small 
     pelagic fish. Can. J. Fish. Aquat. Sci. [In review]
+  - Code and Data Pipeline Citation: Hopkins, S. C., & Tommasi, D. (2026). R Code & 
+    Simulation Pipeline corresponding to "Harnessing transboundary survey integration 
+    for species distribution models: technical maneuvers for small pelagic fish" 
+    (CJFAS publication). GitHub Repository: https://github.com/futureseas/SardineTMB
 
 ===============================================================================
 1. OVERVIEW & SCOPE
@@ -105,8 +120,8 @@ Key Variables Included in File Headers:
   extract, regrid (10 x 10 km grid), and translate these dataset inputs into 
   species distribution models are archived under a GPL-3.0 license at:
   https://github.com/futureseas/SardineTMB.git. Following these procedures, the 
-  spatial extent of the dataset spans roughly 178.63°W to 100.78°W and 11.46°N 
-  to 52.48°N.
+  spatial extent of the dataset spans roughly 162.45°W to 109.91°W and 18.10°N 
+  to 66.53°N.
 
 ===============================================================================
 5. CONTACT INFORMATION
