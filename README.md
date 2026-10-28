@@ -1,792 +1,93 @@
-#--------------------------------------------------------------------------------------------
-# Step 1: Check data quality, resolve precision and sample, and isolate incomplete entries for U.S. Data
-#--------------------------------------------------------------------------------------------
+# SardineTMB
 
-## Script used: 
-*"~/Data/ATM CPS Survey/ATM Survey Sardine Data Prep.First.Filter.and.Specimen.Data.Rmd"* 
+> **Peer Review Snapshot Note (`v0.2.0-alpha`):** This repository contains the R code, Linux CDO re-gridding routines, and spatiotemporal modeling pipeline accompanying the manuscript submission to the *Canadian Journal of Fisheries and Aquatic Sciences* (CJFAS). Code refinement, efficiency tuning, and script modularization remain ongoing on the `main` branch.
 
-## Inputs used:
+---
 
-Note that all data inputs are now directly downloaded via a html call in the code!
+## Overview
 
-1) *"~/Data/ATM CPS Survey/CPS_Trawl_LifeHistory_Haulcatch.new.server.version.csv" (sep = ",")*
-- Data can be found at: https://www.fisheries.noaa.gov/inport/item/20693
-- This data provides total species weight and haul characteristics for the US Survey Sections.
-- Note this the code highlights some differences between in observations counts where "old data version" describes observations that were previously housed on ERDDAP, but all analyses use the new data.
+This repository provides a reproducible workflow for standardizing, integrating, and modeling transboundary surface-trawl survey data for Pacific sardine across the California Current Ecosystem (CCE; 28.65°N–54.80°N, 134.21°W–114.79°W).
 
-2) *"~/Data/ATM CPS Survey/CPS_Trawl_LifeHistory_Specimen.new.server.version.csv" (sep = ",")*
-- Data can be found at: https://www.fisheries.noaa.gov/inport/item/20693
-- This data provides sardine specimen observations for length and weight comps by haul for the US Survey Sections.
-- Note this the code highlights some differences between in observations counts where "old data version" describes observations that were previously housed on ERDDAP, but all analyses use the new data.
+Haul-level biomass from U.S. and Canadian surveys (2008, 2012–2019) is standardized by swept-volume ($\text{m}^3$) and partitioned into functional maturity stages:
 
-## Outputs generated: 
-1) [Concluding Data] *"~/Data/ATM CPS Survey/ATM.Survey.no.corresponding.specimen.table.entry.csv" (sep = ",")*
-- This data frame isolates hauls where there is no corresponding sardine specimen data. Length and corresponding specimen weights will be assigned by nearest haul and total catch weight proportioned by them.
+1. **Immature:** $< 15.0\text{ cm}$ ($< L_{50}$ threshold).
+2. **Maturing:** $15.0\text{ cm}$ to $< 20.0\text{ cm}$ (young, partially mature fish, ages 1–2).
+3. **Fully Mature:** $\ge 20.0\text{ cm}$ ($L_{100}$ threshold).
 
-2) [Diagnostic] *"~/Data/ATM CPS Survey/ATM.Survey.no.subsample_weight.table.entry.csv" (sep = ",")*
-- This data frame isolates hauls where length is present in the specimen data, but not weight
-- It is generated solely as a pre-check in the data quality prior to redistributing sardine weight or removing extra specimen.
+Spatial haul observations are coupled with $10\text{ km} \times 10\text{ km}$ Regional Ocean Modeling System (ROMS) hindcasts to evaluate catchability effects associated with Mixed Layer Depth (MLD). Using `sdmTMB`, spatiotemporal candidate models evaluate mesh geometries (standard, anisotropy, SPDE barrier), Tweedie/delta-hurdle distribution families, error structures, and spatial covariates via 5-fold multifactorial stratified cross-validation. Selected models are projected onto a standardized grid to generate regional abundance indices, Center of Gravity (COG), and Effective Volume Occupied (EVO).
 
-3) [Concluding Data] *"~/Data/ATM CPS Survey/ATM.Survey.no.length.table.entry.csv" (sep = ",")*
-- This data frame isolates hauls where there is sardine specimen weights, but not lengths. Length and corresponding specimen weights will be assigned by nearest haul and total catch weight proportioned by them.
+---
 
-4) [Diagnostic] *"~/Data/ATM CPS Survey/ATM.Survey.extra.sample.observation.csv" (sep = ",")*
-- This data frame isolates hauls where the number of specimens listed is greater than the total number of sardine specimens reportedly sampled.
-- It is generated solely as a pre-check in the data quality prior to redistributing weight or removing extra specimen.
+## Manuscripts & Data Citations
 
-5) [Concluding Data] *"~/Data/ATM CPS Survey/2003.2024.ATM.Survey.with.specimen.data.csv" (sep = ",")*
-- This is a data frame with the combined haul and specimen characteristics for sardine length and weight compositions.
-- The data has been cleaned where extra specimen observations have been removed and weight redistributed following investigation to match total species weight and subsample weights.
+### Primary Manuscript
 
-#--------------------------------------------------------------------------------------------
-# Step 2: Allocate weight and length based on nearest haul (spatial temporal distance matrices)
-#--------------------------------------------------------------------------------------------
+> Hopkins, S. C., Tommasi, D., Pozo Buil, M., Kaplan, I. C., Wildermuth, R. P., Muhling, B., Boldt, J. L., Jensen, A. J., & Allen Akselrud, C. (2026). *Harnessing transboundary survey integration for species distribution models: technical maneuvers for small pelagic fish*. Canadian Journal of Fisheries and Aquatic Sciences [Under Review].
 
-## Script used: 
-*"~/Data/ATM CPS Survey/ATM Survey Sardine Data Prep.No.Specimen.Data.Rmd"* 
+### Repository Citation
 
-## Inputs used:
-1) *"~/Data/ATM CPS Survey/2003.2024.ATM.Survey.with.specimen.data.csv" (sep = ",")*
-- This is from Step 1).
+> Hopkins, S. C., & Tommasi, D. (2026). *R Code & Simulation Pipeline corresponding to "Harnessing transboundary survey integration for species distribution models: technical maneuvers for small pelagic fish"*. GitHub Repository: [https://github.com/futureseas/SardineTMB](https://github.com/futureseas/SardineTMB)
 
-2) *"~/Data/ATM CPS Survey/ATM.Survey.no.corresponding.specimen.table.entry.csv" (sep = ",")*
-- This is from Step 1).
+### Primary Data Sources
 
-3) *"~/Data/ATM CPS Survey/ATM.Survey.no.length.table.entry.csv" (sep = ",")*
-- This is from Step 1).
+* **ROMS Hindcast MLD Layers:** Stephanie, C., Pozo Buil, M., & Fiechter, J. (2026). *ROMS mixed layer depth (MLD) hindcast output for the California Current Ecosystem (2008–2020)*. SEANOE. [https://doi.org/10.17882/120759](https://doi.org/10.17882/120759) (CC-BY 4.0).
+* **U.S. ATM CPS Trawl Data:** NOAA Fisheries InPort Item 20693. [https://www.fisheries.noaa.gov/inport/item/20693](https://www.fisheries.noaa.gov/inport/item/20693)
+* **Canadian IPES Trawl Data:** Fisheries and Oceans Canada (DFO) Open Data Portal. [Open Government Portal Link](https://open.canada.ca/data/en/dataset/aa13418a-12f3-40d1-bfa8-83c7b8c795b0) *(Night pelagic trawl survey data available upon request from DFO)*.
 
-4) *"~/functions.R"*
-- Script with multiple functions used throughout the study including:
-	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
-        - Spatial difference matrix (dropped from study)
-        - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced with function in relevant files)
-        - conditional length weight estimation based on recorded data or using global length weight relationship ('process_haul_stable'; defined within relevant files instead)
+---
 
-## Outputs generated: 
-1) [Summary] *"~/Data/ATM CPS Survey/ATM.Survey.estimated.specimen.weight-lenComps.csv" (sep = ",")*
-- This is a summary table of the nearest haul observations identified in space and time as well as indices, initial values
+## System Requirements & Dependencies
 
-2) [Concluding Data] *"~/Data/ATM CPS Survey/2003.2024.ATM.Survey.with.integrated.specimen.data.csv" (sep = ",")*
-- This is the concluding sardine weight and length comps observations and borrowed values 
+The complete pipeline spans R statistical computing environments and Linux bash environments (for CDO re-gridding).
 
-#--------------------------------------------------------------------------------------------
-# Step 3: Create transect data and calculate density for U.S. Survey sections
-#--------------------------------------------------------------------------------------------
+### Hardware & Environment Testing
 
-## Script used: 
-*"~/Data/ATM CPS Survey/ATM Survey Sardine Transect with Sweep Area Prep.Rmd"*
+* **Operating Systems:** Ubuntu 22.04 / 24.04 LTS (WSL2 / Native Linux) and Windows 11.
+* **R Environment:** `R (>= 4.5.2)`
+* **Climate Data Operators (CDO):** `CDO v2.4.0` with `ecCodes v2.34.1` and `NetCDF v4.9.2` (located in `CDO-Ubuntu20.04/`).
 
-## Inputs used:
-1) *"~/Data/ATM CPS Survey/2003.2024.ATM.Survey.with.integrated.specimen.data.csv" (sep = ",")*
-- This is from Step 2).
+### R Dependencies
 
-2) *"~/Data/ATM CPS Survey/ATM.Survey.estimated.specimen.weight-lenComps.csv" (sep = ",")*
-- This is used to filter out sardine length weight estimates where weight was assigned based on the nearest haul composition.
+```R
+# Required R Libraries
+install.packages(c(
+  "sdmTMB", "TMB", "sf", "stars", 
+  "tidyverse", "data.table", "DHARMa", 
+  "Matrix", "ggplot2"
+))
 
-3) *"~/functions.R"*
-- Script with multiple functions used throughout the study including:
-	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
-        - Spatial difference matrix (dropped from study)
-        - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced with function in relevant files)
-        - conditional length weight estimation based on recorded data or using global length weight relationship ('process_haul_stable'; defined within relevant files instead)
+```
 
-## Outputs generated:
-1) [Figure] *"~/Final.Figures/age.length.keys.jpeg"*
-- The sardine data from the U.S. Survey sections fitted with SS3 model growth parameters for age length keys.
+---
 
-2) [Intermediary Step] *"~/Data/ATM CPS Survey/season.weight.raw.Spring.csv" (sep = ",")*
-- This is a data frame of only U.S. spring observations without any analyses or grouping methods applied beyond assigning a length bin to sardine.
+## Analytical Workflow & Pipeline Execution
 
-3) [Intermediary Step] *"~/Data/ATM CPS Survey/season.weight.raw.Summer.csv" (sep = ",")*
-- This is a data frame of only U.S. summer observations without any analyses or grouping methods applied beyond assigning a length bin to sardine.
+The pipeline is organized sequentially across 14 computational steps:
 
-4) [Diagnostic] *"~/Data/ATM CPS Survey/CPS.ATM.Survey/Biomass.audit.minus.2007.csv" (sep = ",")*
-- This provides a summary survey sampling effort based on the calculated expansion factor, which allows you to estimate confidence in sardine data quality and interpretation.
+| Step | Objective | Primary Script | Core Output / Deliverable |
+| --- | --- | --- | --- |
+| **1** | Resolve U.S. survey precision, missing specimen entries, and sample quality | `ATM Survey Sardine Data Prep.First.Filter.and.Specimen.Data.Rmd` | Combined haul and specimen composition data (`2003.2024.ATM.Survey.with.specimen.data.csv`) |
+| **2** | Allocate missing weight/length via spatio-temporal nearest-haul matrices | `ATM Survey Sardine Data Prep.No.Specimen.Data.Rmd` | Integrated specimen compositions (`2003.2024.ATM.Survey.with.integrated.specimen.data.csv`) |
+| **3** | Calculate swept-volume effort, construct transects, and derive U.S. density | `ATM Survey Sardine Transect with Sweep Area Prep.Rmd` | Binned U.S. density csv(s) (`area.transects.final.*.csv`) & biomass audits |
+| **4** | Clean, verify, and standardize Canadian IPES/DFO survey gear openings and catch | `IPES.and.Canadian.Data.V3.Rmd` | Standardized Canadian survey density data (`Canadian.set.1999.2024.csv`) |
+| **5** | Merge U.S. & Canadian survey datasets across spatial coordinate projections | `Join.Canadian.American.Data.revised.Rmd` | Integrated transboundary summer dataset (`Canada.and.CPS.ATM.Survey.Data.w.latBin.csv`) |
+| **6** | Mask and re-grid ROMS 3D hindcast fields to $10\text{ km} \times 10\text{ km}$ cells via Linux CDO | `CDO-Ubuntu20.04/CJFAS.MLD.work.R` | Masked & conservative/bilinear re-gridded NetCDF layers (`*_masked_regrid.nc`) |
+| **7** | Intersect ROMS MLD and bathymetry grids with survey transect centroids | `test_regrid.function.plots.Rmd` | Transect dataset with environmental covariates (`mld.final_table_allHistoric.csv`) |
+| **8** | Model selection routine for full dataset via 5-fold stratified cross-validation | `Integrated.Canadian.dat.cv.approach.to.model.selection.Rmd` | Model ranking metrics (`Model.decision.table.csv`) & top candidate model (`S2.fit.basic.model.rds`) |
+| **9** | Spatiotemporal model selection across maturity length-bin candidate structures | `Integrated.Canadian.dat.w.LenBin.cv.approach.to.model.selection.V2.Rmd` | Top length-bin model fit with reml correction (`S2.fit.200plusLenBin.model_SptlVarying.w.sptl.reml.rds`) & cross-validation metrics |
+| **11** | Optimized execution pipeline for global baseline model | `Final.Global.Model.Rmd` | Global model diagnostics, DHARMa residual maps, and parameter confidence intervals |
+| **12** | Execution pipeline for final maturity length-bin model | `Final.LengthBin.Model.TEST.deltalognormal.2.Rmd` | Length-bin model diagnostics, DHARMa residuals, and spatial random fields |
+| **13** | Derive regional/global abundance indices, COG, and EVO metrics | `Final.Model.Scripts/S2.fit.basic.model_10km2.grid.Rmd` | Projected abundance time-series and spatial distribution indices |
+| **14** | Map spatially varying MLD and length-bin density fields | `Final.Model.Scripts/S2.DeltaLognormalLength.bins.model_10km2.grid.Rmd` | High-resolution publication figures for spatial density and management sub-areas |
 
-5) [Diagnostic] *"~/Data/ATM CPS Survey/CPS.ATM.Survey.top_influence_hauls.minus.2007.csv" (sep = ",")* 
-- This provides a data frame of hauls in the U.S. survey that are most influencing sardine length and weight patterns.
+---
 
-6) [Figure] *"~/Final.Figures/Hybrid.reweighting.w.correction.plot.USA.jpeg"*
-- Individual sardine weight (y-axis) at length (x-axis) observations (reported) and estimated values from the SSMSE VBGF by haul (dots), but excluding hauls where nearest haul compositions were used to distribution weight.
+## Auxiliary Tooling & Verification Statement
 
-7) [Figure] *"~/Final.Figures/Defs.with.cps.atm.survey.dat.jpeg"*
-- Summed sardine weight (y-axis) by length bin (including those estimated via SSMSE VBGF and where weight length compositions from the nearest haul were used to distribute weight) by haul (x-axis).
+Gemini 3.6 Flash (Google LLC) was utilized as an auxiliary technical tool for code proofing, syntax error debugging, script refactoring, and documentation formatting. All algorithms, mathematical logic, statistical model choices, and numerical outputs were independently authored, verified, and validated by the primary authors.
 
-8) [Intermediary Step] *"~/Data/ATM CPS Survey/CPS.ATM.Survey.final.dat.csv" (sep = ",")*
-- This is a data frame before of full observations with species grouping prior to investigating whether the haul was taken at night or during the day and before assigning seasons or calculating distance measures.
+---
 
-9) [Figure] *"~/Final.Figures/expansion_biomass_per.haul.plot.USA.jpeg"*
-- Haul transect locations relative to the coast line with initial boundary hypotheses (hypotheses do not involve EEZ boundaries beyond expected effort changes). From top to bottom, the first black line is the US / Canadian EEZ border, the blue dashed blue line is Cape Mendocino (northern stock delimiter), the long-dashed red line is Point Conception (Spawning centre), and the remaining black line is the EEZ border of the US and Mexico. 
+## License
 
-10) [Intermediary Step] *"~/Data/ATM CPS Survey/area.transects.pre-step.shp" (sep = ",")*
-- This is a data frame before of full observations with species grouping and assigns when the haul was taken (i.e., at night or during the day), but prior to assigning seasons or calculating distance measures.
-
-11) [Figure] *"~/Final.Figures/cps.atm.survey.length.bin.map.North.jpeg"*
-- Rough cut of the haul transect locations relative to the coast line for the "Northern stock". From top to bottom, the first black line is the US / Canadian EEZ border to the blue dashed blue line is Cape Mendocino (northern stock delimiter).
-
-12) [Figure] *"~/Final.Figures/cps.atm.survey.length.bin.map.South.jpeg"*
-- Rough cut of the haul transect locations relative to the coast line for the "Southern stock" only. From top to bottom, the blue dashed blue line is Cape Mendocino (northern stock delimiter) and the remaining black line is the EEZ border of the US and Mexico. 
-
-13) [Summary] *"~/Data/Final.Results/summaryTable.csv" (sep = ",")*
-- Summarises the U.S. Survey hauls by season and length bin denoting presence and absence hauls and latitudinal boundary extents
-
-14) [Concluding Data] *"~/Data/Shapefiles/area.transects.final.2003.2005.csv" (sep = ",")*
-- Data frame (both seasons) with final density calculations using sweep volume from literature, distance calculations, and all groupings for 2003-2005.
-
-15) [Concluding Data] *"~/Data/Shapefiles/area.transects.final.2006.2010.csv" (sep = ",")*
-- Data frame (both seasons) with final density calculations using sweep volume from literature, distance calculations, and all groupings for 2006-2010.
-
-16) [Concluding Data] *"~/Data/Shapefiles/area.transects.final.2011.2014.csv" (sep = ",")*
-- Data frame (both seasons) with final density calculations using sweep volume from literature, distance calculations, and all groupings for 2011-2014.
-
-17) [Concluding Data] *"~/Data/Shapefiles/area.transects.final.2015.2020.csv" (sep = ",")*
-- Data frame (both seasons) with final density calculations using sweep volume from literature, distance calculations, and all groupings for 2015-2020.
-
-18) [Concluding Data] *"~/Data/Shapefiles/area.transects.final.2021.2025.csv" (sep = ",")*
-- Data frame (both seasons) with final density calculations using sweep volume from literature, distance calculations, and all groupings for 2021-2025.
-
-#--------------------------------------------------------------------------------------------
-# Step 4: Clean and join Canadian Survey sections and create transect data and calculate density
-#--------------------------------------------------------------------------------------------
-
-## Script used: 
-*"~/Data/ATM CPS Survey/IPES.and.Canadian.Data.V3.Rmd"*
-
-Note that the night pelagic trawl survey data is available by request only from the DFO, 
-but you can access the IPES data via the DFO data portal: 
-https://can01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fopen.canada.ca%2Fdata%2Fen%2Fdataset%2Faa13418a-12f3-40d1-bfa8-83c7b8c795b0&data=05%7C02%7CJennifer.Boldt%40dfo-mpo.gc.ca%7Ce550571b86674c4b71f008df14e52238%7C1594fdaea1d94405915d011467234338%7C0%7C0%7C639252646510418556%7CUnknown%7CTWFpbGZsb3d8eyJFbXB0eU1hcGkiOnRydWUsIlYiOiIwLjAuMDAwMCIsIlAiOiJXaW4zMiIsIkFOIjoiTWFpbCIsIldUIjoyfQ%3D%3D%7C0%7C%7C%7C&sdata=D3sUX4KziUDNrUKFRGfHWMgMXQZHFSTgI1yGz%2BzmNiY%3D&reserved=0
-
-## Inputs used:
-1) *"~/Data/IPES plus Historic Surveys Canada/SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx" (sheet = "BRIDGE_LOG")*
-
-2) *"~/Data/IPES plus Historic Surveys Canada/SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx" (sheet = "SARDINE_CATCH")*
-
-3) *"~/Data/IPES plus Historic Surveys Canada/SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx" (sheet = "SardineSpecimen")*
-
-4) *"~/Data/IPES plus Historic Surveys Canada/IPES_SardineData_ToStephanieHopkins_V2.xlsx" (sheet = "Bridge")*
-
-5) *"~/Data/IPES plus Historic Surveys Canada/IPES_SardineData_ToStephanieHopkins_V2.xlsx" (sheet = "SardineCatch")*
-
-6) *"~/Data/IPES plus Historic Surveys Canada/IPES_SardineData_ToStephanieHopkins_V2.xlsx" (sheet = "Specimen")*
-
-7) *"~/Data/Shapefiles/area.transects.final.2006.2010.csv" (sep = ",")*
-- From Step 3 to match column names
-
-8) *"~/functions.R"*
-- Script with multiple functions used throughout the study including:
-	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
-        - Spatial difference matrix (dropped from study)
-        - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced with function in relevant files)
-        - conditional length weight estimation based on recorded data or using global length weight relationship ('process_haul_stable'; defined within relevant files instead)
-
-## Outputs generated:
-1) [Diagnostic] *"~/Data/IPES plus Historic Surveys Canada/Speeds.to.check.csv" (sep = ";")*
-- following joining of inputs 1-3, vessel speeds to investigate were isolated and stored to test units and accuracy (km vs knots etc.)
-
-2) [Diagnostic] *"~/Data/IPES plus Historic Surveys Canada/Warp.ratio.check.csv" (sep = ";")*
-- following joining of inputs 1-3, high warp ratio observations were isolated to cross check with the DFO (likely due to target species)
-
-3) [Diagnostic] *"~/Data/IPES plus Historic Surveys Canada/gear.opening.to.check.csv" (sep = ";")*
-- following joining of inputs 1-3, abnormally large gear opening observations were isolated to cross check with the DFO (likely due to target species or unit issues)
-
-4) [Summary | Diagnostics] *"~/Data/IPES plus Historic Surveys Canada/Canadian.surveys.estimated.specimen.weight-lenComps_1999-2014.csv" (sep = ",")*
-- Data frame with pre-2017 sardine data showing the assigned nearest haul information as well as distance in minutes and km are shown to haul observations where both length and weight were missing. This is following cleaning, verification, transect creation, and assigning weight and length compositions, but prior to the applying scaling factors and addressing partial observations.
-
-5) [Intermediary Step] *"~/Data/IPES plus Historic Surveys Canada/Candian.surveys.with.integrated.specimen.data_1999-2014.csv" (sep = ",")*
-- Data frame with pre-2017 sardine data combining the assigned weight length composition hauls and the remaining sardine data including the partial observation hauls.  
-
-6) [Diagnostic] *"~/Data/IPES plus Historic Surveys Canada/Canadian.Survey.Biomass.audit.1999-2014.csv" (sep = ",")*
-- This provides a summary survey sampling effort based on the calculated expansion factor, which allows you to estimate confidence in sardine data quality and interpretation.
-
-7) [Diagnostic] *"~/Data/IPES plus Historic Surveys Canada/Canadian.Survey.Biomass.audit.1999-2014.csv" (sep = ",")*
-- This provides a data frame of hauls in the Canadian surveys pre-2017 that are most influencing sardine length and weight patterns.
-
-8) [Figure] *"~/Data/Final.Figures/Test.Length.Comps.Methods/Hybrid.reweighting.w.correction.plot.1999.2014.Canada.jpeg"*
-- Figure showing the sardine  individual weight (y-axis) at length (x-axis) compositions per haul (points) prior to 2015 (no survey in 2015 or 2016). Hauls where length weight compositions were borrowed from nearest complete hauls are excluded. Where weight observations are available, this is weight is used, otherwise the length weight relationship from Wildermuth et al., 2024 which spans the entire California Coastal Ecosystem (CCE) is used to assign a mean weight at length. 
-
-9) [Figure] *"~/Data/Final.Figures/Test.Length.Comps.Methods/expansion_biomass_per.haul.plot.1999.2014.Canada.jpeg"*
-- Figure showing the proportion of scaled weights per length bin by haul prior to 2015 (no survey in 2015 or 2016) for sardine. 
-
-10) [Figure] *"~/Data/Final.Figures/Test.Length.Comps.Methods/Hybrid.reweighting.w.correction.plot.2017.2024.Canada.jpeg"
-- Figure showing the sardine individual weight (y-axis) at length (x-axis) compositions per haul (points) from 2017 to 2024. No hauls were missing length or weight compositions. 
-
-11) [Figure] *"~/Data/Final.Figures/Test.Length.Comps.Methods/expansion_biomass_per.haul.plot.2017.2024.Canada.jpeg"*
-- Figure showing the sardine proportion of scaled weights per length bin by haul from 2017 to 2024 for sardine. 
-
-12) [Figure | Diagnostic] *"~/Data/Final.Figures/Canadian.IPES.2001to2005_2011and2013.annual.gear.opening.jpeg"*
-- Figure showing binned gear opening dimension frequencies for years where some hauls did not report gear height or gear width or both (missing gear opening dimensions filtered before fitting frequency).
-
-13) [Figure | Diagnostic] *"~/Data/Final.Figures/Canadian.IPES.original.annual.gear.opening.jpeg"*
-- Figure showing the original complete gear opening dimension frequencies by year.
-
-14) [Figure | Diagnostic] *"~/Data/Final.Figures/Canadian.IPES.mean.annual.gear.opening.jpeg"*
-- Figure showing the mean annual gear opening dimension frequencies for complete observations by year.
-
-15) [Figure | Diagnostic] *"~/Data/Final.Figures/Canadian.IPES.mean.annual.gear.opening.compare.jpeg"*
-- Figure showing the frequency of differences from the mean annual gear opening dimension for complete observations by year.
-
-16) [Concluding Data] *"~/Data/Shapefiles/Canadian.set.1999.2024.csv" (sep = ",")*
-- Data frame with final density calculations for all Canadian survey data using sweep volume from observed and annually averaged sweep volume (when missing), distance calculations, and all groupings for 2001-2024 (1999 and 2000 were unresolved).
-
-#--------------------------------------------------------------------------------------------
-# Step 5: Join Canadian and U.S Survey sections 
-#--------------------------------------------------------------------------------------------
-
-## Script used: 
-*"~/Data/ATM CPS Survey/Join.Canadian.American.Data.Rmd"*
-
-## Inputs used:
-1) *"~/Data/Shapefiles/area.transects.final.2003.2005.csv"  (sep = ",")*
-- From Step 3 
-
-2) *"~/Data/Shapefiles/area.transects.final.2006.2010.csv"  (sep = ",")*
-- From Step 3 
-
-3) *"~/Data/Shapefiles/area.transects.final.2011.2014.csv"  (sep = ",")*
-- From Step 3 
-
-4) *"~/Data/Shapefiles/area.transects.final.2015.2020.csv"  (sep = ",")*
-- From Step 3 
-
-5) *"~/Data/Shapefiles/area.transects.final.2021.2025.csv"  (sep = ",")*
-- From Step 3 
-
-6) *"~/Data/Shapefiles/Canadian.set.1999.2024.csv"  (sep = ",")*
-- From Step 4
-
-7) *"~/Data/ATM CPS Survey/ATM.Survey.estimated.specimen.weight-lenComps.csv" (sep = ",")*
-- From Step 3 to filter out assigned length weight compositions where nearest haul was used
-
-8) *"~/Data/ATM CPS Survey/IPES plus Historic Surveys Canada/Canadian.surveys.estimated.specimen.weight-lenComps_1999-2014.csv" (sep = ",")*
-- From Step 4 to filter out assigned length weight compositions where nearest haul was used
-
-9) *"~/functions.R"*
-- Script with multiple functions used throughout the study including:
-	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
-        - Spatial difference matrix (dropped from study)
-        - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced with function in relevant files)
-        - conditional length weight estimation based on recorded data or using global length weight relationship ('process_haul_stable'; defined within relevant files instead)
-
-## Outputs generated:
-1) [Figure] *"~/Final.Figures/Hybrid.reweighting.w.correction.full.dat.summer.jpeg"*
-- Figure showing the sardine individual weight (y-axis) at length (x-axis) compositions per haul (points) for all years and surveys during the summer (June-September). No hauls were missing length or weight compositions. 
-
-2) [Figure] *"~/Final.Figures/Hybrid.reweighting.w.correction.full.dat.spring.jpeg"*
-- Figure showing the sardine individual weight (y-axis) at length (x-axis) compositions per haul (points) for all years and surveys during the spring (March-May). No hauls were missing length or weight compositions. 
-
-4) [Figure] *"~/Final.Figures/Hybrid.reweighting.w.correction.full.dat.summer.jpeg"*
-- Figure showing the proportion of scaled weights per length bin by haul for all years and surveys during the summer (June-September) for sardine.
-
-5) [Figure] *"~/Final.Figures/Hybrid.reweighting.w.correction.full.dat.spring.jpeg"*
-- Figure showing the proportion of scaled weights per length bin by haul for all years and surveys during the spring (March-May) for sardine.
-
-6) [Concluding Data] *"~/Data/AllYears.Unfiltered.Canada.and.CPS.ATM.Survey.Data.csv" (sep = ",")*
-- Full data (All years and countries) with assigned a year season time step
-
-7) [Concluding Data] *"~/Data/ExampleRun/est.missing.time2.rda"*
--  Missing time steps for all possible years ranging from 2008 to 2025
-
-8) [Concluding Data] *"~/Data/Canada.and.CPS.ATM.Survey.Data.csv" (sep = ",")*
-- Joined U.S. and Canadian survey observations for the summer (2008, 2012-2024). The center of each haul transect is stored in 'X' and 'Y' columns in a custom Albers equal area conical projection: "+proj=aea +lat_1=30 +lat_2=50 +lat_0=40 +lon_0=-124.5 +datum=WGS84 +units=m +no_defs" and converted to km for computational efficiency.
-
-9) [Figure] *"~/Final.Figures/S2.trend.check.w.integrated.Canadian.dat.wght.only.jpeg"*
-- Summer total sardine catch weight (summed U.S. + Canadian hauls in metric tons (mt) on x-axis) by year (x-axis) from 2008, 2012-2024 (shown as fitted lines) and total catch weight by haul (in metric tons (mt) shown as points.
-
-10) [Figure] *"~/Final.Figures/S2.trend.check.by.country.w.integrated.Canadian.dat.wght.only.jpeg"*
-- Summer total sardine catch weight (summed hauls) by country in metric tons (mt) on x-axis, by year (x-axis) from 2008, 2012-2024 (shown as fitted black line) and total catch weight by haul (in metric tons (mt) shown as points.
-
-11) [Figure] *"~/Final.Figures/S2.trend.check.by.latBin.w.integrated.Canadian.dat.wght.only.jpeg"*
-- Summer total sardine catch weight (summed hauls) by latitudinal bin (Canada - U.S. EEZ, U.S. EEZ - Cape Mendocino, Cape Mendocino - Point Conception, Point Conception - U.S. EEZ, U.S.EEZ - Baja CA) in metric tons (mt) on x-axis, by year (x-axis) from 2008, 2012-2024 (shown as fitted lines) and total catch weight by haul (in metric tons (mt) shown as points.
-
-12) [Concluding Data] *"~/Data/Canada.and.CPS.ATM.Survey.Data.w.latBin.csv" (sep = ",")*
-- Summer data for all countries from 2008 and 2012-2024 with corresponding 3 latitudinal bins based on output 11 trends.
-
-#--------------------------------------------------------------------------------------------
-# Step 6: Run ROMS re-gridding routine in Linux CDO 
-#--------------------------------------------------------------------------------------------
-
-## Note that the following code must be loaded in Linux environment
-- On windows, the file location for a directory that begins with 
-"Users/steph/Documents/Sardine_SptlOM" would look like "/mnt/c/Users/steph/Documents/Sardine_SptlOM".
-- The following code was compiled in Linux Ubuntu 24.04.4 LTS with:
-1) CDO - 2.4.0 (https://mpimet.mpg.de/cdo)
-2) R version 4.5.2 (2025-10-31)
-2.1) R :  tidyverse version : 2.0.0
-2.2) R : data.table version : 1.18.2.1
-2.3) R :         sf version : 1.0.24
-2.4) R :      tools version : 4.5.2
-3) CDO CDI library version : 2.4.0
-3.1) CDO : ecCodes library version : 2.34.1
-3.2) CDO :NetCDF library version : 4.9.2 of Mar 31 2024 08:09:36 $
-3.3) CDO :  exse library version : 1.5.0
-3.4) CDO :  FILE library version : 1.9.1
-- To access the script, use nano editor
-- To run the script, use RScript from the linux terminal
-
-## Script used: *"~CDO-Ubuntu20.04/CJFAS.MLD.work.R"*
-
-Note it was not possible to publish the ROMS data on github due 
-data size. Pre-processed (already masked MLD layers) are available via
-SEANOE with the following citation:
-
-  Stephanie C. Hopkins, Mercedes Pozo Buil, and 
-  Jerome Fiechter (2026). ROMS Mixed Layer Depth (MLD) Hindcast Output for the 
-  California Current Ecosystem (2008–2020). SEANOE. 
-  https://doi.org/10.17882/120759 with CC-by 4.0 License
-
-## Inputs used:
-1) *"~/Data/ROMS2/allvars_mld_hindcast_2008.nc"*
-2) *"~/Data/ROMS2/allvars_mld_hindcast_2009.nc"*
-3) *"~/Data/ROMS2/allvars_mld_hindcast_2010.nc"*
-4) *"~/Data/ROMS2/allvars_mld_hindcast_2011.nc"*
-5) *"~/Data/ROMS2/allvars_mld_hindcast_2012.nc"*
-6) *"~/Data/ROMS2/allvars_mld_hindcast_2013.nc"*
-7) *"~/Data/ROMS2/allvars_mld_hindcast_2014.nc"*
-8) *"~/Data/ROMS2/allvars_mld_hindcast_2015.nc"*
-9) *"~/Data/ROMS2/allvars_mld_hindcast_2016.nc"*
-10) *"~/Data/ROMS2/allvars_mld_hindcast_2017.nc"*
-11) *"~/Data/ROMS2/allvars_mld_hindcast_2018.nc"*
-12) *"~/Data/ROMS2/allvars_mld_hindcast_2019.nc"*
-13) *"~/Data/ROMS2/allvars_mld_hindcast_2020.nc"*
-14) *"~/Data/ROMS2/bathy_nep.nc"*
-
-## Outputs:
-1) [Intermediary step] For each variable in each nc file, the first loop reduces 
-dimensionality by applying the model's masked layer to each variable and month. 
-Then for each year and variable, a new nc file is made ending in the suffix 
-"_masked.nc" and stored in a new subfolder: "~/Data/ROMS2/Masked".
-
-2) [Behind the scenes] A dummy nc file is made with 10x10km cells.
-- This script generates a NetCDF template for CDO to perform conservative remapping 
-between projected Albers and geographic WGS84 systems by defining a 10km grid and 
-calculating 2D lat/lon center points and their 3D corner boundaries. It defines the 
-grid in meters, transforms all coordinates to WGS84, and embeds critical metadata, 
-such as bounds and grid mapping attributes, to enable accurate area-weighted 
-remapping.
-- It generates two files on the working directory called: "target_10km_grid.txt" and "target_10km_grid.nc".
-
-3) [Concluding Data] For each variable year nc file generated from Output 2, the 
-data is re-gridded based on the type of variable and stored under a new 
-subfolder: "~/Data/ROMS2/Regridded/10x10km" with the suffix "_masked_regrid.nc".
-
-- For the following variables First-order Conservative Remapping (remapcon) was 
-  used to preserve the integral of the field: 
-
-a. chla_vint
-b. microzooplankton_vint
-c. mesozooplankton_vint
-d. Pzooplankton_vint
-e. u_vavg
-f. v_vavg
-g. w_vavg"
-
-- For the remaining variables bilinear interpolation (remapbil) was used:                     
-
-a. sst
-b. temp_vavg
-c. mld
-d. h (bathymetry)
-
-#--------------------------------------------------------------------------------------------
-# Step 7: Assign ROMS to transect data based on mean intersection or nearest feature
-#--------------------------------------------------------------------------------------------
-
-## Script used: *"~test_regrid.function.plots.Rmd"*
-
-## Inputs used:
-1) *"~/Data/Canada.and.CPS.ATM.Survey.Data.w.latBin.csv (sep = ",")*
-- Output 12 from Step 5
-
-2) All data from *"~/Data/ROMS2/Regridded"* of the pattern: 
-pattern = "^mld_hindcast_.*\\_masked_regrid.nc$
-- Output 3 from Step 6
-
-3) [Diagnostic] *"~/Data/ROMS2/Regridded/regridding_validation_report.csv" (sep = ";")*
-- This file provides for each variable year file a comparison of the original 
-area weighted mean value (after masking, but before re-gridding) and the new area 
-weighted mean value from the re-gridded product is made via measuring the percent 
-change. A quick reference column is added called 'Status' where if the percent 
-change is within 10% of the original, it is given a "PASS". Otherwise, it is 
-marked with a "CHECK". 
-
-4) *"~/functions.R"*
-- Script with multiple functions used throughout the study including:
-	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded 
-        ('get_sun_times')
-        - Spatial difference matrix (dropped from study)
-        - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced 
-        with function in relevant files)
-        - conditional length weight estimation based on recorded data or using 
-        global length weight relationship ('process_haul_stable'; defined within
-        relevant files instead)
-
-## Outputs:
-1) [Intermediate step | Diagnostic] *"~/Data/survey.transects.w.mld.obs.csv" (sep = ";")*
-- For each haul transect year and month and ROMS mld combination, all intersecting 
-  re-gridded ROMS cells are identified. 
-- For each intersection identified, the haul transect row is replicated based on 
-  the number of cells intersected in the ROMS output. 
-- This will be averaged in a later step.
-
-2) [Intermediate step | Diagnostic] *"~/Data/survey.transects.w.bathy.obs.csv" (sep = ";")*
-- For each haul transect, all intersecting bathymetry re-gridded ROMS cells are identified. 
-- For each intersection identified, the haul transect row is replicated based on the number of cells intersected in the ROMS output. 
-- This will be averaged in a later step.
-
-3) [Concluding Data] *"~/Data/mld.final_table_allHistoric.csv" (sep = ";")*
-- Combines the averaged intersectional value for mld, averaged intersectional value for bathymetry, and nearest neighbouring mld (when no intersection was identified) per unique haul transect in column called 'mean_depth'.
-
-#--------------------------------------------------------------------------------------------
-# Step 8: Run full data model selection routine (use multi-factorial strata cross-validation)
-#--------------------------------------------------------------------------------------------
-
-## Script used: *"~Integrated.Canadian.dat.cv.approach.to.model.selection.Rmd"*
-
-Inputs used:
-1) *"~/Data/mld.final_table_allHistoric.csv" (sep = ";")*
-- Output 3 from Step 7
-
-2) *"~/Data/Shapefiles/land.barrier.shp"*
-- This is a stored shape file with modified spatial extent and layer simplification originally obtained via the NOAA Global Self-consistent, Hierarchical, High-resolution Geography Database, which resolves coastlines.
-- Used in creating the barrier mesh
-
-3) *"~/Data/ExampleRun/est.missing.time2.rda"*
-- Output 7 from Step 5
-- Used to fill time chunks
-
-4) *"~/functions.R"*
-- Script with multiple functions used throughout the study including:
-	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
-        - Spatial difference matrix (dropped from study)
-        - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced with function in relevant files)
-        - conditional length weight estimation based on recorded data or using global length weight relationship ('process_haul_stable'; defined within relevant files instead)
-
-## Outputs:
-1) [Intermediate step] *"~/Data/Season.2.dat_with_FIXED_FOLDS.rds"*
-- This is the product of the random 5 fold assignment (gear configuration + latitudinal bin) used in order to consistently replicate the model selection ranking
-
-2) [Figure] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.dharma.residuals.pdf"*
-- Only used if not previously saved
-- Dharma residual tests and plot from the DHARMa::testResiduals() function where the best fit model was simulated 500 times with Maximum Likelihood Estimation (MLE) to the Multivariate Normal (MVN) distribution ("mle-mvn"), which includes: 
---- Asymptotic one-sample Kolmogorov-Smirnov test,  
---- DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
---- DHARMa outlier test based on exact binomial test with approximate expectations
-
-3) [Figure] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.qqplot.w.outliers.pdf"*
-- Only used if not previously saved
-- Dharma residual tests and plot from the DHARMa::testResiduals() function where the best fit model was simulated 500 times with Maximum Likelihood Estimation (MLE) to the Multivariate Normal (MVN) distribution ("mle-mvn"), which includes: 
---- QQ-Norm Plot
---- Dispersion pattern
---- QQ-Norm Plot
-
-4) [Figure] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.plot.residual.map.pdf"*
-- Only used if not previously saved
-- Map of Dharma residuals 
-
-5) [Figure]*"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.plot.zero.inflated.test.pdf"*
-- Only used if not previously saved
-- If the model over estimates, underestimates, or correctly captures the zero's in the data 
-
-6) [Figure] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.morans.i.test.pdf"*
-- Only used if not previously saved
-- Map of distance-based spatial autocorrelation
-
-7) [Summary | Diagnostics] *"~/Final.Results/Model.decision.table.csv" (sep = ",")*
-- This provides a report of each fitted models': sanity test, number of passed cross-folds, ELPDs, point-wise and fold-wise ELPD_SEs and ELPD_SDs, as well as model names and structures.
-
-8) [Concluding Data] *"~/Final.Results/S2.fit.basic.model.rds"*
-- This is the best fit model identified from Output 2 based on sanity checks, ELPDs, number of passed folds, and lowest point-wise and fold-wise ELPD_SEs and ELPD_SDs if the difference was less than 1 in ELPD.
-
-9) [Concluding Data] *"~/Final.Results/S2.fit.basic.model.cv.rds"*
-- A object with the cross-validation output obtained
-
-10) [Concluding Data] *"~/Final.Results/barrier2mld_42.5.rds"*
-- The barrier mesh used to fit the best model
-
-11) [Concluding Data] *"~/Final.Results/S2.fit.basic.model.cv.cis.csv" (sep = ",")*
-- Coefficients and confidence intervals for the cross-validation output
-
-12) [Concluding Data] *"~/Final.Results/S2.fit.basic.model.cis.csv" (sep = ",")*
-- Coefficients and confidence intervals for the best fit model output
-
-#--------------------------------------------------------------------------------------------
-# Step 9: Refit full data mesh and run negative binomial tests for impacts of using length bins
-#--------------------------------------------------------------------------------------------
-
-## Script used: *"~Full.data.w.LenBin.exploration.V3.Rmd"*
-
-## Inputs used:
-1) *"~/Data/mld.final_table_allHistoric.csv" (sep = ";")*
-- Output 3 from Step 7
-
-2) *"~/Data/Shapefiles/land.barrier.shp"*
-- This is a stored shape file with modified spatial extent and layer simplification originally obtained via the NOAA Global Self-consistent, Hierarchical, High-resolution Geography Database, which resolves coastlines.
-- Used in creating the barrier mesh
-
-3) *"~/Data/ExampleRun/est.missing.time2.rda"*
--  Output 7 from Step 5
-- Used to fill time chunks
-
-4) *"~/functions.R"*
-- Script with multiple functions used throughout the study including:
-	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
-        - Spatial difference matrix (dropped from study)
-        - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced with function in relevant files)
-        - conditional length weight estimation based on recorded data or using global length weight relationship ('process_haul_stable'; defined within relevant files instead)
-
-5) *"~/Final.Results/barrier2mld_42.5.rds"*
-- The barrier mesh used to fit the best model from Step 8, object 5 that is refitted to the data count data to produce a new mesh.
-
-## Outputs:
-1) [Figure | Diagnostic] *"~/Final.Figures/S2.length.bin.exploration/FulldatLengthbinObsByYearBoxplot.jpeg"*
-- Boxplot of the observed length bin weights by year across all hauls using 3 length bins (0-150 mm, 150-200 mm, and 200+ mm) 
-
-2) [Intermediary step] *"~/Season.2.NegBionom2.3-LengethBin.test.w.folds.rds"*
-- This locks in the randomly assigned hauls to 3 folds based on latitudinal bin and gear configuration when using three length bins (0-150 mm, 150-200 mm, and 200+ mm).
-
-3) [Intermediary step] *"~/Season.2.NegBionom2.2-LengethBin.test.w.folds.rds"*
-- This locks in the randomly assigned hauls to 5 folds based on latitudinal bin and gear configuration when using two length bins (0-200 mm and 200+ mm).
-
-4) [Concluding Data] *"~/Final.Results/"NegativeBionom2_justification.model.decision.table.csv" (sep = ",")*
-- This provides a report of each fitted models': sanity test, number of passed cross-folds, ELPDs, point-wise and fold-wise ELPD_SEs and ELPD_SDs, as well as model names and structures.
-
-#--------------------------------------------------------------------------------------------
-# Step 10: Refit full data mesh and length bins designation results to run length bin model 
-# selection routine (use multifactorial strata cross-validation)
-#--------------------------------------------------------------------------------------------
-
-## Script used: *"~Integrated.Canadian.dat.w.LenBin.cv.approach.to.model.selection.V2.Rmd"*
-
-## Inputs used:
-1) *"~/Data/mld.final_table_allHistoric.csv" (sep = ";")*
-- Output 3 from Step 7
-
-2) *"~/Data/Shapefiles/land.barrier.shp"*
-- This is a stored shape file with modified spatial extent and layer simplification originally obtained via the NOAA Global Self-consistent, Hierarchical, High-resolution Geography Database, which resolves coastlines.
-- Used in creating the barrier mesh
-
-3) *"~/Data/ExampleRun/est.missing.time2.rda"*
--  Output 7 from Step 5
-- Used to fill time chunks
-
-4) *"~/Final.Results/barrier2mld_42.5.rds"*
-- The barrier mesh used to fit the best model from Step 8, object 5 that is refitted to the data count data to produce a new mesh.
-
-5) *"~/functions.R"*
-- Script with multiple functions used throughout the study including:
-	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
-        - Spatial difference matrix (dropped from study)
-        - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced with function in relevant files)
-        - conditional length weight estimation based on recorded data or using global length weight relationship ('process_haul_stable'; defined within relevant files instead)
-
-## Outputs:
-1) [Intermediary step] *"~/Season.2.2-LengethBin.dat.w.folds.rds"*
-- This locks in the randomly assigned hauls to 3 folds based on latitudinal bin and gear configuration to replicate cross validation model selection rankings.
-
-2) [Figure] *"~/Final.Figures/S2.fit.length.bin.basic.model_10km2.grid/fit.basic.dharma.residuals.length.bins.pdf"*
-- Dharma residual tests and plot from the DHARMa::testResiduals() function where the best fit model was simulated 500 times with Maximum Likelihood Estimation (MLE) to the Multivariate Normal (MVN) distribution ("mle-mvn"), which includes: 
---- Asymptotic one-sample Kolmogorov-Smirnov test,  
---- DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
---- DHARMa outlier test based on exact binomial test with approximate expectations
-
-3) [Figure] *"~/Final.Figures/S2.fit.length.bin.basic.model_10km2.grid/fit.basic.qqplot.w.outliers.length.bins.pdf"*
-- Dharma residual tests and plot from the DHARMa::testResiduals() function where the best fit model was simulated 500 times with Maximum Likelihood Estimation (MLE) to the Multivariate Normal (MVN) distribution ("mle-mvn"), which includes: 
---- QQ-Norm Plot
---- Dispersion pattern
---- QQ-Norm Plot
-
-4) [Figure] *"~/Final.Figures/S2.fit.length.bin.basic.model_10km2.grid/fit.basic.plot.residual.map.length.bins.pdf"*
-- Map of Dharma residuals 
-
-5) [Figure] *"~/Final.Figures/S2.fit.length.bin.basic.model_10km2.grid/fit.basic.morans.i.test.length.bins.pdf"*
-- Map of distance-based spatial autocorrelation
-
-6) [Summary | Diagnostic] *"~/Final.Results/LengthBin.decision.table.csv" (sep = ",")*
-- This provides a report of each fitted length bin models': sanity test, number of passed cross-folds, ELPDs, point-wise and fold-wise ELPD_SEs and ELPD_SDs, as well as model names and structures.
-
-7) [Concluding Data] *"~/Final.Results/S2.LengthBin.basic.model.rds"*
-- Final length bin model chosen based on the decision table for length bins (lognormal w/o REML, spatial varying effects by length bin, and MLD*sweep_volume offset)
-
-8) [Diagnostic] *"~/Final.Results/S2.Length.basic.model.cv.rds"*
-- Cross validations run for the final length bin model saved as an r-object
-
-9) [Concluding Data] *"~/Final.Results/FullRunofLengthBinbarrier2mld_42.5.rds"*
-- Updated barrier mesh with the length bin data
-
-10) [Concluding Data] *"~/Final.Results/S2.LengthBin.basic.model.cis.csv" (sep = ",")*
-- Summary with confidence intervals and coefficients obtained for best model 
-
-11) [Concluding Data] *"~/Final.Results/S2.LengthBin.basic.model.cv.cis.csv" (sep = ",")*
-- Summary with confidence intervals and coefficients obtained for cross-validation folds of best model 
-
-#--------------------------------------------------------------------------------------------
-# Step 11: Shorten script include best fit for full data model
-#--------------------------------------------------------------------------------------------
-
-## Script used: *"~/Final.Global.Model.Rmd"*
-
-## Inputs used:
-1) *"~/Data/mld.final_table_allHistoric.csv" (sep = ";")*
-- Output 3 from Step 7
-
-2) *"~/Data/Shapefiles/land.barrier.shp"*
-- This is a stored shape file with modified spatial extent and layer simplification originally obtained via the NOAA Global Self-consistent, Hierarchical, High-resolution Geography Database, which resolves coastlines.
-- Used in creating the barrier mesh
-
-3) *"~/Data/ExampleRun/est.missing.time2.rda"*
--  Output 7 from Step 5
-- Used to fill time chunks
-
-4) *"~/Data/Season.2.dat_with_FIXED_FOLDS.rds"*
-- Object 1 from Step 8. 
-- This is the product of the random 5 fold assignment (gear configuration + latitudinal bin) used in order to consistently replicate the model selection ranking
-
-## Outputs:
-1) [Duplicated] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.dharma.residuals.pdf"*
-- Only used if not previously saved
-- Dharma residual tests and plot from the DHARMa::testResiduals() function where the best fit model was simulated 500 times with Maximum Likelihood Estimation (MLE) to the Multivariate Normal (MVN) distribution ("mle-mvn"), which includes: 
---- Asymptotic one-sample Kolmogorov-Smirnov test,  
---- DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
---- DHARMa outlier test based on exact binomial test with approximate expectations
-
-2) [Duplicated] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.qqplot.w.outliers.pdf"*
-- Only used if not previously saved
-- Dharma residual tests and plot from the DHARMa::testResiduals() function where the best fit model was simulated 500 times with Maximum Likelihood Estimation (MLE) to the Multivariate Normal (MVN) distribution ("mle-mvn"), which includes: 
---- QQ-Norm Plot
---- Dispersion pattern
---- QQ-Norm Plot
-
-3) [Duplicated] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.plot.residual.map.pdf"*
-- Only used if not previously saved
-- Map of Dharma residuals 
-
-4) [Duplicated] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.plot.zero.inflated.test.pdf"*
-- Only used if not previously saved
-- If the model over estimates, underestimates, or correctly captures the zero's in the data 
-
-5) [Duplicated] *"~/Final.Figures/S2.fit.basic.model_10km2.grid/fit.basic.morans.i.test.pdf"*
-- Only used if not previously saved
-- Map of distance-based spatial autocorrelation
-
-6) [Duplicated] *"~/Final.Results/S2.fit.basic.model.rds"*
-- Only used if not previously saved
-- Final full model chosen based on the decision table (deltalognormal w REML, and sweep_volume offset)
-
-7) [Duplicated] *"~/Final.Results/S2.fit.basic.model.cv.rds"*
-- Only used if not previously saved
-- Cross validations run for the final full model saved as an r-object
-
-8) [Duplicated] *"~/Final.Results/barrier2mld_42.5.rds"*
-- Only used if not previously saved
-- Best fit mesh for full model
-
-9) [Duplicated] *"~/Final.Results/S2.fit.basic.model.opti.cis.csv" (sep = ",")*
-- Only used if not previously saved
-- Summary with confidence intervals and coefficients obtained for best model 
-
-10) [Duplicated] *"~/Final.Results/S2.fit.basic.model.cv.cis.csv" (sep = ",")*
-- Only used if not previously saved
-- Summary with confidence intervals and coefficients obtained for cross-validation folds of best model 
-
-#--------------------------------------------------------------------------------------------
-# Step 12: Shorten script include best fit for full data model
-#--------------------------------------------------------------------------------------------
-
-## Script used: *"~/Final.LengthBin.Model.Rmd"*
-
-## Inputs used:
-1) *"~/Data/mld.final_table_allHistoric.csv" (sep = ";")*
-- Output 3 from Step 7
-
-2) *"~/Data/Shapefiles/land.barrier.shp"*
-- This is a stored shape file with modified spatial extent and layer simplification originally obtained via the NOAA Global Self-consistent, Hierarchical, High-resolution Geography Database, which resolves coastlines.
-- Used in creating the barrier mesh
-
-3) *"~/Data/ExampleRun/est.missing.time2.rda"*
-- Output 7 from Step 5
-- Used to fill time chunks
-
-4) *~Season.2.2-LengethBin.dat.w.folds.rds"*
-- Object 1 from Step 10. 
-- This is the product of the random 3 fold assignment (gear configuration + latitudinal bin) used in order to consistently replicate the model selection ranking
-
-## Outputs:
-1) [Duplicated] *"~/Final.Figures/S2.fit.length.bin.basic.model_10km2.grid/fit.basic.dharma.residuals.length.bins.pdf"*
-- Only used if not previously saved
-- Dharma residual tests and plot from the DHARMa::testResiduals() function where the best fit model was simulated 500 times with Maximum Likelihood Estimation (MLE) to the Multivariate Normal (MVN) distribution ("mle-mvn"), which includes: 
---- Asymptotic one-sample Kolmogorov-Smirnov test,  
---- DHARMa nonparametric dispersion test via sd of residuals fitted vs. simulated
---- DHARMa outlier test based on exact binomial test with approximate expectations
-
-2) [Duplicated] *"~/Final.Figures/S2.fit.length.bin.basic.model_10km2.grid/fit.basic.qqplot.w.outliers.length.bins.pdf"*
-- Only used if not previously saved
-- Dharma residual tests and plot from the DHARMa::testResiduals() function where the best fit model was simulated 500 times with Maximum Likelihood Estimation (MLE) to the Multivariate Normal (MVN) distribution ("mle-mvn"), which includes: 
---- QQ-Norm Plot
---- Dispersion pattern
---- QQ-Norm Plot
-
-3) [Duplicated] *"~/Final.Figures/S2.fit.length.bin.basic.model_10km2.grid/fit.basic.plot.residual.map.length.bins.pdf"*
-- Only used if not previously saved
-- Map of Dharma residuals 
-
-4) [Duplicated] *"~/Final.Figures/S2.fit.length.bin.basic.model_10km2.grid/fit.basic.morans.i.test.length.bins.pdf"*
-- Only used if not previously saved
-- Map of distance-based spatial autocorrelation
-
-5) [Duplicated] *"~/Final.Results/S2.LengthBin.basic.model.rds"*
-- Only used if not previously saved
-- Final length bin model chosen based on the decision table for length bins (lognormal w/o REML, spatial varying effects by length bin, and MLD*sweep_volume offset)
-
-8) [Duplicated] *"~/Final.Results/S2.Length.basic.model.cv.rds"*
-- Only used if not previously saved
-- Cross validations run for the final length bin model saved as an r-object
-
-9) [Duplicated] *"~/Final.Results/FullRunofLengthBinbarrier2mld_42.5.rds"*
-- Only used if not previously saved
-- Updated barrier mesh with the length bin data
-
-10) [Duplicated] *"~/Final.Results/S2.LengthBin.basic.model.cis.csv" (sep = ",")*
-- Only used if not previously saved
-- Summary with confidence intervals and coefficients obtained for best model 
-
-11) [Duplicated] *"~/Final.Results/S2.LengthBin.basic.model.cv.cis.csv" (sep = ",")*
-- Only used if not previously saved
-- Summary with confidence intervals and coefficients obtained for cross-validation folds of best model 
-
-#--------------------------------------------------------------------------------------------
-# Step 13: Obtain abundance indices and spatial maps for full model
-#--------------------------------------------------------------------------------------------
-
-## Script used: *"~/Final.Model.Scripts/S2.fit.basic.length.bins.model_10km2.grid.Rmd"*
-
-## Inputs used:
-1) 
-
-## Outputs:
-
-#--------------------------------------------------------------------------------------------
-# Step 14: Create maps with spatial varying effects by length bin
-#--------------------------------------------------------------------------------------------
-
-## Script used: *"~/Final.Model.Scripts/Final.LengthBin.Model.Rmd"*
-
-## Inputs used:
-1) 
-
-## Outputs:
+This repository is distributed under the **GNU General Public License v3.0**. See the [LICENSE](https://www.google.com/search?q=LICENSE) file for complete details.
