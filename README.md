@@ -6,6 +6,9 @@
 *"~/Data/ATM CPS Survey/ATM Survey Sardine Data Prep.First.Filter.and.Specimen.Data.Rmd"* 
 
 ## Inputs used:
+
+Note that all data inputs are now directly downloaded via a html call in the code!
+
 1) *"~/Data/ATM CPS Survey/CPS_Trawl_LifeHistory_Haulcatch.new.server.version.csv" (sep = ",")*
 - Data can be found at: https://www.fisheries.noaa.gov/inport/item/20693
 - This data provides total species weight and haul characteristics for the US Survey Sections.
@@ -79,15 +82,10 @@
 1) *"~/Data/ATM CPS Survey/2003.2024.ATM.Survey.with.integrated.specimen.data.csv" (sep = ",")*
 - This is from Step 2).
 
-2) *"~/Data/SSMSE.Base.Model.Data/start2001/constGrowthMidSteepNewSelex_OM"*
-- This is a model output folder from the SardineMSE work of Wildermuth et al., 2024 used to estimate age based on a VBGF.
-- The output file can be accessed via https://github.com/futureseas/SardineMSE
-- Note that for this you need the r-package "r4ss" installed
-
-3) *"~/Data/ATM CPS Survey/ATM.Survey.estimated.specimen.weight-lenComps.csv" (sep = ",")*
+2) *"~/Data/ATM CPS Survey/ATM.Survey.estimated.specimen.weight-lenComps.csv" (sep = ",")*
 - This is used to filter out sardine length weight estimates where weight was assigned based on the nearest haul composition.
 
-4) *"~/functions.R"*
+3) *"~/functions.R"*
 - Script with multiple functions used throughout the study including:
 	- making transects ('make_transect_sf')
         - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
@@ -157,6 +155,10 @@
 
 ## Script used: 
 *"~/Data/ATM CPS Survey/IPES.and.Canadian.Data.V3.Rmd"*
+
+Note that the night pelagic trawl survey data is available by request only from the DFO, 
+but you can access the IPES data via the DFO data portal: 
+https://can01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fopen.canada.ca%2Fdata%2Fen%2Fdataset%2Faa13418a-12f3-40d1-bfa8-83c7b8c795b0&data=05%7C02%7CJennifer.Boldt%40dfo-mpo.gc.ca%7Ce550571b86674c4b71f008df14e52238%7C1594fdaea1d94405915d011467234338%7C0%7C0%7C639252646510418556%7CUnknown%7CTWFpbGZsb3d8eyJFbXB0eU1hcGkiOnRydWUsIlYiOiIwLjAuMDAwMCIsIlAiOiJXaW4zMiIsIkFOIjoiTWFpbCIsIldUIjoyfQ%3D%3D%7C0%7C%7C%7C&sdata=D3sUX4KziUDNrUKFRGfHWMgMXQZHFSTgI1yGz%2BzmNiY%3D&reserved=0
 
 ## Inputs used:
 1) *"~/Data/IPES plus Historic Surveys Canada/SardineSurvey_BridgeCatch20062012_ToStephanieHopkins_v3.xlsx" (sheet = "BRIDGE_LOG")*
@@ -312,7 +314,8 @@
 #--------------------------------------------------------------------------------------------
 
 ## Note that the following code must be loaded in Linux environment
-- On windows, the file location for a directory that begins with "Users/steph/Documents/Sardine_SptlOM" would look like "/mnt/c/Users/steph/Documents/Sardine_SptlOM".
+- On windows, the file location for a directory that begins with 
+"Users/steph/Documents/Sardine_SptlOM" would look like "/mnt/c/Users/steph/Documents/Sardine_SptlOM".
 - The following code was compiled in Linux Ubuntu 24.04.4 LTS with:
 1) CDO - 2.4.0 (https://mpimet.mpg.de/cdo)
 2) R version 4.5.2 (2025-10-31)
@@ -328,7 +331,16 @@
 - To access the script, use nano editor
 - To run the script, use RScript from the linux terminal
 
-## Script used: *"~test_regrid.nc.version.10km.x.10km.R"*
+## Script used: *"~CDO-Ubuntu20.04/CJFAS.MLD.work.R"*
+
+Note it was not possible to publish the ROMS data on github due 
+data size. Pre-processed (already masked MLD layers) are available via
+SEANOE with the following citation:
+
+  Stephanie C. Hopkins, Mercedes Pozo Buil, and 
+  Jerome Fiechter (2026). ROMS Mixed Layer Depth (MLD) Hindcast Output for the 
+  California Current Ecosystem (2008–2020). SEANOE. 
+  https://doi.org/10.17882/120759 with CC-by 4.0 License
 
 ## Inputs used:
 1) *"~/Data/ROMS2/allvars_mld_hindcast_2008.nc"*
@@ -346,21 +358,28 @@
 13) *"~/Data/ROMS2/allvars_mld_hindcast_2020.nc"*
 14) *"~/Data/ROMS2/bathy_nep.nc"*
 
-## Data for future studies:
-1) In the subfolder: *"~/Data/ROMS2/YearsNotUsed"* corresponding ROMS output files for the years 1995-2007 are stored. 
-- These were note masked or re-gridded or used in any way in the current analysis.
-
-2) In the subfolder: *"~/Data/ROMS2/Regridded/WGS-84"* files from an earlier work where the data was not transformed to Albers Equal area conical projection during the regridding process are provided.
-
 ## Outputs:
-1) [Intermediary step] For each variable in each nc file, the first loop reduces dimensionality by applying the model's masked layer to each variable and month. Then for each year and variable, a new nc file is made ending in the suffix "_masked.nc" and stored in a new subfolder: "~/Data/ROMS2/Masked".
+1) [Intermediary step] For each variable in each nc file, the first loop reduces 
+dimensionality by applying the model's masked layer to each variable and month. 
+Then for each year and variable, a new nc file is made ending in the suffix 
+"_masked.nc" and stored in a new subfolder: "~/Data/ROMS2/Masked".
 
 2) [Behind the scenes] A dummy nc file is made with 10x10km cells.
-- This script generates a NetCDF template for CDO to perform conservative remapping between projected Albers and geographic WGS84 systems by defining a 10km grid and calculating 2D lat/lon center points and their 3D corner boundaries. It defines the grid in meters, transforms all coordinates to WGS84, and embeds critical metadata, such as bounds and grid mapping attributes, to enable accurate area-weighted remapping.
+- This script generates a NetCDF template for CDO to perform conservative remapping 
+between projected Albers and geographic WGS84 systems by defining a 10km grid and 
+calculating 2D lat/lon center points and their 3D corner boundaries. It defines the 
+grid in meters, transforms all coordinates to WGS84, and embeds critical metadata, 
+such as bounds and grid mapping attributes, to enable accurate area-weighted 
+remapping.
 - It generates two files on the working directory called: "target_10km_grid.txt" and "target_10km_grid.nc".
 
-3) [Concluding Data] For each variable year nc file generated from Output 2, the data is re-gridded based on the type of variable and stored under a new subfolder: "~/Data/ROMS2/Regridded/10x10km" with the suffix "_masked_regrid.nc".
-- For the following variables First-order Conservative Remapping (remapcon) was used to preserve the integral of the field: 
+3) [Concluding Data] For each variable year nc file generated from Output 2, the 
+data is re-gridded based on the type of variable and stored under a new 
+subfolder: "~/Data/ROMS2/Regridded/10x10km" with the suffix "_masked_regrid.nc".
+
+- For the following variables First-order Conservative Remapping (remapcon) was 
+  used to preserve the integral of the field: 
+
 a. chla_vint
 b. microzooplankton_vint
 c. mesozooplankton_vint
@@ -368,7 +387,9 @@ d. Pzooplankton_vint
 e. u_vavg
 f. v_vavg
 g. w_vavg"
+
 - For the remaining variables bilinear interpolation (remapbil) was used:                     
+
 a. sst
 b. temp_vavg
 c. mld
@@ -384,30 +405,37 @@ d. h (bathymetry)
 1) *"~/Data/Canada.and.CPS.ATM.Survey.Data.w.latBin.csv (sep = ",")*
 - Output 12 from Step 5
 
-2) All data from *"~/Data/ROMS2/Regridded/WGS-84"* of the pattern: pattern = "^allvars_mld_hindcast_.*\\_mld_masked_regrid.nc$
-- Item 2 from Data for future studies
-- This is for visual comparison only (here mld in 2020 is tested against the transformed equivalent) 
-
-3) All data from *"~/Data/ROMS2/Regridded/10x10km"* of the pattern: pattern = "^allvars_mld_hindcast_.*\\_mld_masked_regrid.nc$
+2) All data from *"~/Data/ROMS2/Regridded"* of the pattern: 
+pattern = "^mld_hindcast_.*\\_masked_regrid.nc$
 - Output 3 from Step 6
-- Note that a comparison was made with the wgs-84 mld nc file in 2020 to see if a 2-step transformation behaved differently than re-gridding and transforming the data in 1-step. 
 
-4) [Diagnostic] *"~/Data/ROMS2/Regridded/10x10km/regridding_validation_report.csv" (sep = ";")*
-- This file provides for each variable year file a comparison of the original area weighted mean value (after masking, but before re-gridding) and the new area weighted mean value from the re-gridded product is made via measuring the percent change. A quick reference column is added called 'Status' where if the percent change is within 10% of the original, it is given a "PASS". Otherwise, it is marked with a "CHECK". 
+3) [Diagnostic] *"~/Data/ROMS2/Regridded/regridding_validation_report.csv" (sep = ";")*
+- This file provides for each variable year file a comparison of the original 
+area weighted mean value (after masking, but before re-gridding) and the new area 
+weighted mean value from the re-gridded product is made via measuring the percent 
+change. A quick reference column is added called 'Status' where if the percent 
+change is within 10% of the original, it is given a "PASS". Otherwise, it is 
+marked with a "CHECK". 
 
-5) *"~/functions.R"*
+4) *"~/functions.R"*
 - Script with multiple functions used throughout the study including:
 	- making transects ('make_transect_sf')
-        - finding if the haul was at night or daylight hours if not recorded ('get_sun_times')
+        - finding if the haul was at night or daylight hours if not recorded 
+        ('get_sun_times')
         - Spatial difference matrix (dropped from study)
         - Temporal difference matrix ('comput_time_diff_matrix')
-        - model summary based on AIC, R2, and SD (dropped from study and replaced with function in relevant files)
-        - conditional length weight estimation based on recorded data or using global length weight relationship ('process_haul_stable'; defined within relevant files instead)
+        - model summary based on AIC, R2, and SD (dropped from study and replaced 
+        with function in relevant files)
+        - conditional length weight estimation based on recorded data or using 
+        global length weight relationship ('process_haul_stable'; defined within
+        relevant files instead)
 
 ## Outputs:
 1) [Intermediate step | Diagnostic] *"~/Data/survey.transects.w.mld.obs.csv" (sep = ";")*
-- For each haul transect year and month and ROMS mld combination, all intersecting re-gridded ROMS cells are identified. 
-- For each intersection identified, the haul transect row is replicated based on the number of cells intersected in the ROMS output. 
+- For each haul transect year and month and ROMS mld combination, all intersecting 
+  re-gridded ROMS cells are identified. 
+- For each intersection identified, the haul transect row is replicated based on 
+  the number of cells intersected in the ROMS output. 
 - This will be averaged in a later step.
 
 2) [Intermediate step | Diagnostic] *"~/Data/survey.transects.w.bathy.obs.csv" (sep = ";")*
