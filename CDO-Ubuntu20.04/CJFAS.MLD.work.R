@@ -74,7 +74,7 @@ nc_close(res.check)
 # --- End structure check ---
 
 # --- Apply mask to each variable and time step ---
-masked.files.is.made = TRUE
+masked.files.is.made = FALSE
 if(masked.files.is.made == FALSE) {
 
   fls <- list.files(file.path(dir, ROMSpath), pattern = "\\.nc$", full.names = TRUE)
@@ -219,7 +219,7 @@ if(masked.files.is.made == FALSE) {
       ncatt_put(nc_out, 0, "author", "Stephanie Hopkins, Mer Pozo Buil, Jerome Fiechter")
       ncatt_put(nc_out, 0, "creator_name", "Stephanie Hopkins")
       ncatt_put(nc_out, 0, "creator_email", "shopkin1@ucsc.edu")
-      ncatt_put(nc_out, 0, "institution", "University of California Santa Cruz / NOAA SWFSC / NOAA NWFSC")
+      ncatt_put(nc_out, 0, "institution", "University of California Santa Cruz")
       
       # Provenance & Methods
       ncatt_put(nc_out, 0, "source", "ROMS-NEP (Northeast Pacific) regional ocean model runs provided by Mer Pozo Buil")
