@@ -129,4 +129,4 @@ Key Variables Included in File Headers:
 For questions regarding dataset generation, grid structure, or usage:
   - Contact Person: Stephanie C. Hopkins
   - Email: shopkin1@ucsc.edu
-  - Institutions: University of California Santa Cruz / NOAA SWFSC / NOAA NWFSC
+  - Institution: University of California Santa Cruz
