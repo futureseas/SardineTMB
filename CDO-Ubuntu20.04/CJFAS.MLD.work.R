@@ -4,7 +4,6 @@ gc()
 
 # Define your base directory (MUST be the Linux path)
 dir <- "/mnt/c/Users/steph/Documents/SardineTMB"
-dir <- "C:/Users/steph/Documents/SardineTMB"
 load.lib <- c("ncdf4", "tidyverse", "data.table", "sf", "tools")
 install.lib <- load.lib[!load.lib %in% installed.packages()]
 
@@ -76,9 +75,10 @@ nc_close(res.check)
 # --- Apply mask to each variable and time step ---
 masked.files.is.made = TRUE
 if(masked.files.is.made == FALSE) {
-
+  
+  # Filter out bathy, target grid, and masked files (in case already made)
   fls <- list.files(file.path(dir, ROMSpath), pattern = "\\.nc$", full.names = TRUE)
-  fls <- fls[!grepl("bathy", basename(fls), ignore.case = TRUE)]
+  fls <- fls[!grepl("bathy|target_|masked", basename(fls), ignore.case = TRUE)]
 
   if (length(fls) == 0) stop("No non-bathymetry NetCDF files found in specified directory.")
 
@@ -112,8 +112,17 @@ if(masked.files.is.made == FALSE) {
     for (var_name in var_names) {
       message("  Masking variable: ", var_name)
       
+      # Safely apply mask based on variable dimensions
       var_data <- ncvar_get(nc_in, var_name)
       var_data <- drop(var_data)
+      
+      if (length(dims) == 3) {
+        for (t in seq_len(dims[3])) {
+          var_data[,,t][mask == 0] <- NA
+        }
+      } else if (length(dims) == 2) {
+        var_data[mask == 0] <- NA
+      }
       
       for (t in seq_len(dim(var_data)[3])) {
         var_data[,,t][mask == 0] <- NA
