@@ -116,16 +116,12 @@ if(masked.files.is.made == FALSE) {
       var_data <- ncvar_get(nc_in, var_name)
       var_data <- drop(var_data)
       
-      if (length(dims) == 3) {
-        for (t in seq_len(dims[3])) {
+      if (length(dim(var_data)) == 3) {
+        for (t in seq_len(dim(var_data)[3])) {
           var_data[,,t][mask == 0] <- NA
         }
-      } else if (length(dims) == 2) {
+      } else if (length(dim(var_data)) == 2) {
         var_data[mask == 0] <- NA
-      }
-      
-      for (t in seq_len(dim(var_data)[3])) {
-        var_data[,,t][mask == 0] <- NA
       }
       
       # Define dimensions
