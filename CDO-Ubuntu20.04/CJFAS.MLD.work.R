@@ -74,7 +74,7 @@ nc_close(res.check)
 # --- End structure check ---
 
 # --- Apply mask to each variable and time step ---
-masked.files.is.made = FALSE
+masked.files.is.made = TRUE
 if(masked.files.is.made == FALSE) {
 
   fls <- list.files(file.path(dir, ROMSpath), pattern = "\\.nc$", full.names = TRUE)
